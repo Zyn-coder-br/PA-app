@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f5f8f7"><meta name="description" content="Controle local de vencimentos Vencimento PA">
+<link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css"><title>Vencimento PA</title>
+</head>
+<body>
+<div id="app">
+<header class="app-header">
+  <div class="brand-area"><div class="brand-mark">🛒</div><div><div class="brand-name">VENCIMENTO <span>PA</span></div><div class="brand-subtitle">Prevenção hoje, resultados sempre!</div></div></div>
+  <div class="user-area"><div><strong>Olá, Ramon! 👋</strong><small>Pleno 2 | Administrador</small></div><div class="avatar">R</div><button class="header-icon" id="settingsShortcut" aria-label="Abrir ajustes">⚙</button></div>
+</header>
+<main id="view"></main>
+<nav class="bottom-nav" aria-label="Navegação principal">
+<button data-view="dashboard" class="active"><span>⌂</span><small>Início</small></button>
+<button data-view="products"><span>▣</span><small>Produtos</small></button>
+<button data-view="batches"><span>⌗</span><small>Batida</small></button>
+<button data-view="expiries"><span>▦</span><small>Vencimentos</small></button>
+<button data-view="pending"><span>▤</span><small>Pendências</small></button>
+<button data-view="settings"><span>⚙</span><small>Ajustes</small></button>
+</nav>
+</div>
+<dialog id="productDialog"><form method="dialog" id="productForm"><div class="dialog-head"><div><div class="eyebrow">CADASTRO</div><h2>Novo produto</h2></div><button value="cancel" class="close-btn">×</button></div><label>Nome do produto<input id="name" required maxlength="100" placeholder="Ex.: Leite Ninho 750g"></label><label>EAN / código de barras<input id="ean" inputmode="numeric" maxlength="20" placeholder="Opcional"></label><label>Corredor<select id="corridor" required></select></label><div class="two"><label>Validade<input id="expiry" type="date" required></label><label>Quantidade<input id="quantity" type="number" min="1" value="1" required></label></div><label>Status<select id="status"><option value="encontrado">Encontrado</option><option value="corredor">No corredor</option><option value="separado">Separado</option><option value="oferta">Aguardando oferta</option><option value="resolvido">Resolvido</option></select></label><button class="primary wide" id="saveProduct" value="default">Salvar produto</button></form></dialog>
+<input id="restoreInput" type="file" accept="application/json" hidden>
+<script src="app.js"></script>
+</body></html>
