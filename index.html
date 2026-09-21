@@ -67,10 +67,7 @@
   </div>
 </dialog>
 <input id="restoreInput" type="file" accept="application/json" hidden>
-<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = {
-  url: "https://vwzdzmfewqkzaokdwzyj.supabase.co",
-  anonKey: "sb_publishable_Sw0O5MWTbjr11gnhnDZQPQ_DHnzUD0u"
-};</script>
+<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = { url: "", anonKey: "" };</script>
 <script>
 (function () {
   'use strict';
@@ -83,28 +80,63 @@
     var dialog = byId('vpaAuthDialog');
     if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
   }
-  function setLoggedUser(user) {
-    var name = user && user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name);
+  var currentProfile = null;
+  function setLoggedUser(user, profile) {
+    var profileName = profile && profile.full_name;
+    var name = profileName || (user && user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name));
     var email = user && user.email;
     var display = name || email || 'Usuário autenticado';
     var first = display.trim().charAt(0).toUpperCase() || 'U';
     var nameEl = byId('vpaHeaderUserName');
+    var roleEl = byId('vpaHeaderUserRole');
     var avatarEl = byId('vpaHeaderAvatar');
     if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
     if (avatarEl) avatarEl.textContent = first;
+    if (roleEl) {
+      var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' };
+      roleEl.textContent = (roleLabels[profile && profile.role] || 'Usuário');
+    }
+    window.VPA_PROFILE = profile || null;
+  }
+  function applyProfileProtection(profile) {
+    var isAdmin = Boolean(profile && profile.active !== false && profile.role === 'admin');
+    var settingsShortcut = byId('settingsShortcut');
+    if (settingsShortcut) settingsShortcut.title = isAdmin ? 'Abrir ajustes administrativos' : 'Abrir ajustes pessoais';
+    document.documentElement.dataset.vpaRole = profile && profile.role ? profile.role : 'unknown';
+    document.documentElement.dataset.vpaAdmin = isAdmin ? 'true' : 'false';
+  }
+  async function loadProfile(user) {
+    if (!user || !window.VPASupabase || !window.VPASupabase.getProfile) {
+      currentProfile = null; setLoggedUser(user, null); applyProfileProtection(null); return null;
+    }
+    try {
+      currentProfile = await window.VPASupabase.getProfile(user.id);
+      if (currentProfile && currentProfile.active === false) {
+        message('Seu usuário está inativo. Procure o administrador.');
+        await window.VPASupabase.signOut(); showLogin(); return null;
+      }
+      setLoggedUser(user, currentProfile); applyProfileProtection(currentProfile); return currentProfile;
+    } catch (error) {
+      console.warn('[VPA] Não foi possível carregar o perfil:', error);
+      message('Login realizado, mas não foi possível carregar seu perfil.');
+      setLoggedUser(user, null); applyProfileProtection(null); return null;
+    }
   }
   async function setupAuth() {
     if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
     try {
       var session = await window.VPASupabase.getSession();
       if (!session) showLogin();
-      else setLoggedUser(session.user);
+      else await loadProfile(session.user);
       var client = window.VPASupabase.getClient && window.VPASupabase.getClient();
       if (client && client.auth && client.auth.onAuthStateChange) {
         client.auth.onAuthStateChange(function (event, nextSession) {
           if (nextSession && nextSession.user) {
-            setLoggedUser(nextSession.user);
+            loadProfile(nextSession.user);
           } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESH_FAILED') {
+            currentProfile = null;
+            window.VPA_PROFILE = null;
+            applyProfileProtection(null);
             showLogin();
           }
         });
@@ -127,7 +159,7 @@
             byId('vpaAuthEmail').value.trim(),
             byId('vpaAuthPassword').value
           );
-          setLoggedUser(result && result.user);
+          await loadProfile(result && result.user);
           message('Login realizado.');
           var dialog = byId('vpaAuthDialog');
           if (dialog && typeof dialog.close === 'function') dialog.close();
@@ -147,6 +179,9 @@
           if (window.VPASupabase && window.VPASupabase.signOut) {
             await window.VPASupabase.signOut();
           }
+          currentProfile = null;
+          window.VPA_PROFILE = null;
+          applyProfileProtection(null);
           message('Sessão encerrada. Entre novamente para continuar.');
           showLogin();
         } catch (error) {
