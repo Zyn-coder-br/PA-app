@@ -59,18 +59,49 @@
         </label>
         <div class="vpa-auth-options">
           <label class="vpa-remember"><input type="checkbox" checked> <span>Lembrar de mim</span></label>
-          <span class="vpa-forgot">Acesso protegido</span>
+          <button type="button" class="auth-link" id="vpaForgotPassword">Esqueci a senha</button>
         </div>
         <p id="vpaAuthMessage" class="field-help vpa-auth-message" role="status"></p>
         <button type="submit" class="primary vpa-auth-submit" id="vpaAuthSubmit">↪ &nbsp; Entrar</button>
         <div class="vpa-auth-notice"><b>♧</b><div><strong>Acesso restrito à equipe autorizada</strong><span>Se você não possui um usuário, fale com o administrador.</span></div></div>
         <div class="vpa-auth-divider"><span>OU</span></div>
+        <button type="button" class="secondary wide auth-register-button" id="vpaOpenSignup">Criar novo usuário</button>
         <div class="vpa-local-note"><b>▣</b><div><strong>Modo local disponível</strong><span>Os dados locais permanecem neste dispositivo.</span></div><span>›</span></div>
       </form>
       <div class="vpa-auth-quote">“Prevenir é garantir qualidade para o nosso cliente.”<small>VENCIMENTO PA · PREVENÇÃO HOJE, RESULTADOS SEMPRE</small></div>
     </section>
   </div>
 </dialog>
+<dialog id="vpaSignupDialog" class="vpa-small-auth-dialog">
+  <form id="vpaSignupForm">
+    <div class="dialog-head"><div><div class="eyebrow">NOVO ACESSO</div><h2>Criar usuário</h2><p class="dialog-help">Cadastre seu nome, e-mail e uma senha segura.</p></div><button type="button" class="close-btn" id="vpaCloseSignup" aria-label="Fechar">×</button></div>
+    <label>Nome completo<input id="vpaSignupName" required maxlength="100" autocomplete="name" placeholder="Ex.: Luan da Silva"></label>
+    <label>E-mail<input id="vpaSignupEmail" type="email" required autocomplete="email" placeholder="nome@empresa.com"></label>
+    <label>Senha<input id="vpaSignupPassword" type="password" required minlength="8" autocomplete="new-password" placeholder="Mínimo de 8 caracteres"></label>
+    <label>Confirmar senha<input id="vpaSignupConfirm" type="password" required minlength="8" autocomplete="new-password" placeholder="Repita a senha"></label>
+    <p id="vpaSignupMessage" class="field-help vpa-auth-message" role="status"></p>
+    <div class="dialog-actions"><button type="button" class="secondary" id="vpaCancelSignup">Cancelar</button><button type="submit" class="primary" id="vpaSignupSubmit">Criar usuário</button></div>
+    <p class="dialog-help">O cadastro utiliza o Supabase. Se a confirmação de e-mail estiver ativada, confira sua caixa de entrada.</p>
+  </form>
+</dialog>
+<dialog id="vpaResetRequestDialog" class="vpa-small-auth-dialog">
+  <form id="vpaResetRequestForm">
+    <div class="dialog-head"><div><div class="eyebrow">RECUPERAÇÃO</div><h2>Esqueci minha senha</h2><p class="dialog-help">Informe seu e-mail para receber o link de recuperação.</p></div><button type="button" class="close-btn" id="vpaCloseResetRequest" aria-label="Fechar">×</button></div>
+    <label>E-mail<input id="vpaResetEmail" type="email" required autocomplete="email" placeholder="Seu e-mail cadastrado"></label>
+    <p id="vpaResetRequestMessage" class="field-help vpa-auth-message" role="status"></p>
+    <div class="dialog-actions"><button type="button" class="secondary" id="vpaCancelResetRequest">Cancelar</button><button type="submit" class="primary" id="vpaResetRequestSubmit">Enviar link</button></div>
+  </form>
+</dialog>
+<dialog id="vpaUpdatePasswordDialog" class="vpa-small-auth-dialog">
+  <form id="vpaUpdatePasswordForm">
+    <div class="dialog-head"><div><div class="eyebrow">NOVA SENHA</div><h2>Redefinir senha</h2><p class="dialog-help">Escolha uma nova senha para sua conta.</p></div></div>
+    <label>Nova senha<input id="vpaNewPassword" type="password" required minlength="8" autocomplete="new-password" placeholder="Mínimo de 8 caracteres"></label>
+    <label>Confirmar nova senha<input id="vpaNewPasswordConfirm" type="password" required minlength="8" autocomplete="new-password" placeholder="Repita a senha"></label>
+    <p id="vpaUpdatePasswordMessage" class="field-help vpa-auth-message" role="status"></p>
+    <button type="submit" class="primary wide" id="vpaUpdatePasswordSubmit">Salvar nova senha</button>
+  </form>
+</dialog>
+<footer class="vpa-credits">Criado por <strong>Ramon do N. Gomes</strong> · Matrícula 6024513</footer>
 <input id="restoreInput" type="file" accept="application/json" hidden>
 <dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = {
   url: "https://vwzdzmfewqkzaokdwzyj.supabase.co",
@@ -80,13 +111,18 @@
 (function () {
   'use strict';
   function byId(id) { return document.getElementById(id); }
-  function message(text) {
-    var el = byId('vpaAuthMessage');
-    if (el) el.textContent = text || '';
-  }
-  function showLogin() {
-    var dialog = byId('vpaAuthDialog');
-    if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+  function message(text) { var el = byId('vpaAuthMessage'); if (el) el.textContent = text || ''; }
+  function setMessage(id, text) { var el = byId(id); if (el) el.textContent = text || ''; }
+  function showDialog(id) { var dialog = byId(id); if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal(); }
+  function closeDialog(id) { var dialog = byId(id); if (dialog && typeof dialog.close === 'function' && dialog.open) dialog.close(); }
+  function showLogin() { showDialog('vpaAuthDialog'); }
+  function friendlyError(error) {
+    var raw = String(error && error.message || error || '');
+    if (/invalid login credentials/i.test(raw)) return 'E-mail ou senha inválidos.';
+    if (/email not confirmed/i.test(raw)) return 'Confirme seu e-mail antes de entrar.';
+    if (/user already registered/i.test(raw)) return 'Este e-mail já está cadastrado.';
+    if (/password should be at least/i.test(raw)) return 'A senha precisa ter pelo menos 8 caracteres.';
+    return raw || 'Não foi possível concluir a operação.';
   }
   var currentProfile = null;
   function setLoggedUser(user, profile) {
@@ -95,15 +131,10 @@
     var email = user && user.email;
     var display = name || email || 'Usuário autenticado';
     var first = display.trim().charAt(0).toUpperCase() || 'U';
-    var nameEl = byId('vpaHeaderUserName');
-    var roleEl = byId('vpaHeaderUserRole');
-    var avatarEl = byId('vpaHeaderAvatar');
+    var nameEl = byId('vpaHeaderUserName'); var roleEl = byId('vpaHeaderUserRole'); var avatarEl = byId('vpaHeaderAvatar');
     if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
     if (avatarEl) avatarEl.textContent = first;
-    if (roleEl) {
-      var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' };
-      roleEl.textContent = (roleLabels[profile && profile.role] || 'Usuário');
-    }
+    if (roleEl) { var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
     window.VPA_PROFILE = profile || null;
   }
   function applyProfileProtection(profile) {
@@ -114,104 +145,69 @@
     document.documentElement.dataset.vpaAdmin = isAdmin ? 'true' : 'false';
   }
   async function loadProfile(user) {
-    if (!user || !window.VPASupabase || !window.VPASupabase.getProfile) {
-      currentProfile = null; setLoggedUser(user, null); applyProfileProtection(null); return null;
-    }
+    if (!user || !window.VPASupabase || !window.VPASupabase.getProfile) { currentProfile = null; setLoggedUser(user, null); applyProfileProtection(null); return null; }
     try {
       currentProfile = await window.VPASupabase.getProfile(user.id);
-      if (currentProfile && currentProfile.active === false) {
-        message('Seu usuário está inativo. Procure o administrador.');
-        await window.VPASupabase.signOut(); showLogin(); return null;
-      }
+      if (currentProfile && currentProfile.active === false) { message('Seu usuário está aguardando liberação do administrador.'); await window.VPASupabase.signOut(); showLogin(); return null; }
       setLoggedUser(user, currentProfile); applyProfileProtection(currentProfile); return currentProfile;
-    } catch (error) {
-      console.warn('[VPA] Não foi possível carregar o perfil:', error);
-      message('Login realizado, mas não foi possível carregar seu perfil.');
-      setLoggedUser(user, null); applyProfileProtection(null); return null;
-    }
+    } catch (error) { console.warn('[VPA] Não foi possível carregar o perfil:', error); message('Login realizado, mas não foi possível carregar seu perfil.'); setLoggedUser(user, null); applyProfileProtection(null); return null; }
   }
   async function setupAuth() {
     if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
     try {
       var session = await window.VPASupabase.getSession();
-      if (!session) showLogin();
-      else await loadProfile(session.user);
+      if (!session) showLogin(); else await loadProfile(session.user);
       var client = window.VPASupabase.getClient && window.VPASupabase.getClient();
       if (client && client.auth && client.auth.onAuthStateChange) {
         client.auth.onAuthStateChange(function (event, nextSession) {
-          if (nextSession && nextSession.user) {
-            loadProfile(nextSession.user);
-          } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESH_FAILED') {
-            currentProfile = null;
-            window.VPA_PROFILE = null;
-            applyProfileProtection(null);
-            showLogin();
-          }
+          if (event === 'PASSWORD_RECOVERY') { showDialog('vpaUpdatePasswordDialog'); return; }
+          if (nextSession && nextSession.user) { loadProfile(nextSession.user); }
+          else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESH_FAILED') { currentProfile = null; window.VPA_PROFILE = null; applyProfileProtection(null); showLogin(); }
         });
       }
-    } catch (error) {
-      console.warn('[VPA] Falha ao verificar sessão:', error);
-      message('Não foi possível verificar a sessão.');
-    }
+    } catch (error) { console.warn('[VPA] Falha ao verificar sessão:', error); message('Não foi possível verificar a sessão.'); }
   }
+  function wireClose(buttonId, dialogId) { var el = byId(buttonId); if (el) el.addEventListener('click', function () { closeDialog(dialogId); }); }
   document.addEventListener('DOMContentLoaded', function () {
     var form = byId('vpaAuthForm');
-    if (form) {
-      form.addEventListener('submit', async function (event) {
-        event.preventDefault();
-        var button = byId('vpaAuthSubmit');
-        if (button) button.disabled = true;
-        message('Entrando...');
-        try {
-          var result = await window.VPASupabase.signIn(
-            byId('vpaAuthEmail').value.trim(),
-            byId('vpaAuthPassword').value
-          );
-          await loadProfile(result && result.user);
-          message('Login realizado.');
-          var dialog = byId('vpaAuthDialog');
-          if (dialog && typeof dialog.close === 'function') dialog.close();
-        } catch (error) {
-          message(error && error.message ? error.message : 'Não foi possível entrar.');
-        } finally {
-          if (button) button.disabled = false;
-        }
-      });
-    }
-
+    if (form) form.addEventListener('submit', async function (event) {
+      event.preventDefault(); var button = byId('vpaAuthSubmit'); if (button) button.disabled = true; message('Validando acesso...');
+      try { var result = await window.VPASupabase.signIn(byId('vpaAuthEmail').value.trim(), byId('vpaAuthPassword').value); await loadProfile(result && result.user); message('Login realizado.'); closeDialog('vpaAuthDialog'); }
+      catch (error) { message(friendlyError(error)); }
+      finally { if (button) button.disabled = false; }
+    });
     var logout = byId('vpaLogoutButton');
-    if (logout) {
-      logout.addEventListener('click', async function () {
-        logout.disabled = true;
-        try {
-          if (window.VPASupabase && window.VPASupabase.signOut) {
-            await window.VPASupabase.signOut();
-          }
-          currentProfile = null;
-          window.VPA_PROFILE = null;
-          applyProfileProtection(null);
-          message('Sessão encerrada. Entre novamente para continuar.');
-          showLogin();
-        } catch (error) {
-          console.warn('[VPA] Falha ao sair:', error);
-          message('Não foi possível encerrar a sessão.');
-        } finally {
-          logout.disabled = false;
-        }
-      });
-    }
-
+    if (logout) logout.addEventListener('click', async function () { logout.disabled = true; try { if (window.VPASupabase && window.VPASupabase.signOut) await window.VPASupabase.signOut(); currentProfile = null; window.VPA_PROFILE = null; applyProfileProtection(null); message('Sessão encerrada. Entre novamente para continuar.'); showLogin(); } catch (error) { console.warn('[VPA] Falha ao sair:', error); message('Não foi possível encerrar a sessão.'); } finally { logout.disabled = false; } });
     var toggle = byId('vpaTogglePassword');
-    if (toggle) {
-      toggle.addEventListener('click', function () {
-        var input = byId('vpaAuthPassword');
-        if (!input) return;
-        var showing = input.type === 'text';
-        input.type = showing ? 'password' : 'text';
-        toggle.textContent = showing ? '◉' : '◌';
-        toggle.setAttribute('aria-label', showing ? 'Mostrar senha' : 'Ocultar senha');
-      });
-    }
+    if (toggle) toggle.addEventListener('click', function () { var input = byId('vpaAuthPassword'); if (!input) return; var showing = input.type === 'text'; input.type = showing ? 'password' : 'text'; toggle.textContent = showing ? '◉' : '◌'; toggle.setAttribute('aria-label', showing ? 'Mostrar senha' : 'Ocultar senha'); });
+    byId('vpaOpenSignup')?.addEventListener('click', function () { setMessage('vpaSignupMessage', ''); closeDialog('vpaAuthDialog'); showDialog('vpaSignupDialog'); });
+    wireClose('vpaCloseSignup', 'vpaSignupDialog'); wireClose('vpaCancelSignup', 'vpaSignupDialog');
+    byId('vpaSignupForm')?.addEventListener('submit', async function (event) {
+      event.preventDefault(); var name = byId('vpaSignupName').value.trim(); var email = byId('vpaSignupEmail').value.trim(); var password = byId('vpaSignupPassword').value; var confirm = byId('vpaSignupConfirm').value; var button = byId('vpaSignupSubmit');
+      if (password !== confirm) { setMessage('vpaSignupMessage', 'As senhas não conferem.'); return; }
+      if (password.length < 8) { setMessage('vpaSignupMessage', 'A senha precisa ter pelo menos 8 caracteres.'); return; }
+      button.disabled = true; setMessage('vpaSignupMessage', 'Criando usuário...');
+      try { var result = await window.VPASupabase.signUp(name, email, password); if (result && result.session && result.user) { await loadProfile(result.user); closeDialog('vpaSignupDialog'); message('Usuário criado e acesso validado.'); } else { setMessage('vpaSignupMessage', 'Cadastro realizado. Confira seu e-mail para confirmar a conta antes de entrar.'); } }
+      catch (error) { setMessage('vpaSignupMessage', friendlyError(error)); }
+      finally { button.disabled = false; }
+    });
+    byId('vpaForgotPassword')?.addEventListener('click', function () { setMessage('vpaResetRequestMessage', ''); byId('vpaResetEmail').value = byId('vpaAuthEmail').value.trim(); showDialog('vpaResetRequestDialog'); });
+    wireClose('vpaCloseResetRequest', 'vpaResetRequestDialog'); wireClose('vpaCancelResetRequest', 'vpaResetRequestDialog');
+    byId('vpaResetRequestForm')?.addEventListener('submit', async function (event) {
+      event.preventDefault(); var button = byId('vpaResetRequestSubmit'); button.disabled = true; setMessage('vpaResetRequestMessage', 'Enviando link...');
+      try { await window.VPASupabase.sendPasswordReset(byId('vpaResetEmail').value.trim()); setMessage('vpaResetRequestMessage', 'Link enviado. Confira seu e-mail e abra o link para criar uma nova senha.'); }
+      catch (error) { setMessage('vpaResetRequestMessage', friendlyError(error)); }
+      finally { button.disabled = false; }
+    });
+    byId('vpaUpdatePasswordForm')?.addEventListener('submit', async function (event) {
+      event.preventDefault(); var password = byId('vpaNewPassword').value; var confirm = byId('vpaNewPasswordConfirm').value; var button = byId('vpaUpdatePasswordSubmit');
+      if (password !== confirm) { setMessage('vpaUpdatePasswordMessage', 'As senhas não conferem.'); return; }
+      if (password.length < 8) { setMessage('vpaUpdatePasswordMessage', 'A senha precisa ter pelo menos 8 caracteres.'); return; }
+      button.disabled = true; setMessage('vpaUpdatePasswordMessage', 'Salvando nova senha...');
+      try { await window.VPASupabase.updatePassword(password); setMessage('vpaUpdatePasswordMessage', 'Senha alterada com sucesso.'); setTimeout(function () { closeDialog('vpaUpdatePasswordDialog'); showLogin(); }, 700); }
+      catch (error) { setMessage('vpaUpdatePasswordMessage', friendlyError(error)); }
+      finally { button.disabled = false; }
+    });
     setupAuth();
   });
 })();

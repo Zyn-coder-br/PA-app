@@ -101,6 +101,36 @@
     return result.data;
   }
 
+  async function signUp(fullName, email, password) {
+    const client = await init();
+    const redirectTo = window.location.origin + window.location.pathname;
+    const result = await client.auth.signUp({
+      email: email,
+      password: password,
+      options: {
+        emailRedirectTo: redirectTo,
+        data: { full_name: fullName }
+      }
+    });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function sendPasswordReset(email) {
+    const client = await init();
+    const redirectTo = window.location.origin + window.location.pathname;
+    const result = await client.auth.resetPasswordForEmail(email, { redirectTo: redirectTo });
+    if (result.error) throw result.error;
+    return true;
+  }
+
+  async function updatePassword(password) {
+    const client = await init();
+    const result = await client.auth.updateUser({ password: password });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function signOut() {
     const client = await init();
     const result = await client.auth.signOut();
@@ -266,6 +296,9 @@
     init: init,
     getSession: getSession,
     signIn: signIn,
+    signUp: signUp,
+    sendPasswordReset: sendPasswordReset,
+    updatePassword: updatePassword,
     signOut: signOut,
     getProfile: getProfile,
     syncProduct: syncProduct,

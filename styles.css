@@ -406,3 +406,17 @@ body{
 .team-toast.success { background: #147d4d; }
 .team-toast.warning { background: #98620d; }
 .team-toast[hidden] { display: none; }
+
+
+.auth-link{border:0;background:transparent;color:#168657;font-weight:800;font-size:12px;cursor:pointer;padding:4px 0}
+.auth-link:hover{text-decoration:underline}
+.auth-register-button{margin-top:0;min-height:48px;border-radius:12px}
+.vpa-small-auth-dialog{width:min(520px,94vw);padding:0;border:0;border-radius:22px;background:#fff;box-shadow:0 24px 80px #062e254d}
+.vpa-small-auth-dialog::backdrop{background:#052e2bd9;backdrop-filter:blur(7px)}
+.vpa-small-auth-dialog form{padding:28px}
+.vpa-small-auth-dialog label{display:block;margin:12px 0;font-weight:800;color:#34534b;font-size:13px}
+.vpa-small-auth-dialog input{display:block;width:100%;box-sizing:border-box;margin-top:7px;padding:13px 14px;border:1px solid #d6e0e2;border-radius:12px;font:inherit;color:#142d38;background:#fff}
+.vpa-small-auth-dialog input:focus{outline:0;border-color:#2b996b;box-shadow:0 0 0 3px #2b996b18}
+.vpa-credits{padding:18px 16px 26px;text-align:center;color:#71858b;font-size:12px;background:#f5f8f7;border-top:1px solid #e0ebe5}
+.vpa-credits strong{color:#277653}
+@media(max-width:520px){.vpa-small-auth-dialog form{padding:22px 18px}}
