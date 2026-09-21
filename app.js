@@ -53,7 +53,7 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo || p.origemCadastro === 'lista-fefo'), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
+  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
 }
 function daysTo(date) {
   return Math.ceil((new Date(date + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
@@ -169,8 +169,8 @@ function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
   const filter = productFilter;
   const allVisible = visibleProducts();
-  // A lista geral exclui FEFO e Promotores; eles aparecem somente em suas categorias próprias.
-  const list = allVisible.filter((p) => filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : !p.fefo && !p.promotor);
+  // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
+  const list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
   const searchValue = localStorage.getItem('vpa-product-search') || '';
   const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
   const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
@@ -322,10 +322,11 @@ function openProduct(productId = null, forceManual = false) {
   $('name').value = p?.name || '';
   $('ean').value = p?.ean || '';
   $('status').value = p?.status || 'corredor';
-  // A tag rápida é gerenciada pela aba Produtos; o formulário de cadastro não possui campo de tag.
-  // FEFO e Promotor serão configurados em suas áreas próprias futuramente; preservar os dados existentes ao editar.
-  const fefoField = $('fefo');
-  if (fefoField) fefoField.checked = Boolean(p?.fefo);
+  // Define a lista de destino do produto. Ao editar, preserva a categoria atual.
+  const productType = p?.fefo ? 'fefo' : p?.promotor ? 'promotor' : 'general';
+  document.querySelectorAll('input[name=productType]').forEach((radio) => {
+    radio.checked = radio.value === productType;
+  });
   $('photoData').value = p?.photo || '';
   $('photoInput').value = '';
   $('photoPreview').innerHTML = p?.photo ? `<img src="${esc(p.photo)}" alt="Prévia do produto">` : '<span>Sem foto adicionada</span>';
@@ -759,11 +760,12 @@ $('productForm').addEventListener('submit', async (e) => {
     createdAt: existing?.createdAt || new Date().toISOString(),
     batchId: existing?.batchId ?? (batch ? batch.id : null),
     origemCadastro: existing?.origemCadastro || (batch ? 'batida' : 'manual'),
+    categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
     photo: $('photoData').value || existing?.photo || '',
     tag: existing?.tag || '',
-    // Os campos não aparecem no cadastro geral nesta versão; não apagar classificações já existentes.
-    fefo: existing ? Boolean(existing.fefo) : false,
-    promotor: existing ? Boolean(existing.promotor) : false
+    // Cada opção envia o produto somente para sua lista correspondente.
+    fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
+    promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor'
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();

@@ -387,3 +387,16 @@ body{
   opacity: .55;
   cursor: wait;
 }
+
+/* Seletor de destino do cadastro: Geral, FEFO ou Promotores */
+.product-type-field{border:0;padding:0;margin:0 0 14px;min-width:0}
+.product-type-field legend{font-size:12px;font-weight:850;color:#34534b;padding:0;margin-bottom:8px}
+.product-type-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.product-type-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:5px;margin:0;padding:12px 10px;border:1px solid #d7e5df;border-radius:14px;background:#fbfdfc;color:var(--ink);cursor:pointer;min-width:0}
+.product-type-card input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+.product-type-card:has(input:checked){border:2px solid var(--primary);padding:11px 9px;background:var(--primary-soft)}
+.product-type-card:has(input:checked)::after{content:'✓';position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--primary);color:white;font-size:12px;font-weight:900}
+.product-type-icon{font-size:23px;line-height:1.1}
+.product-type-card strong{font-size:12px;line-height:1.25;color:var(--ink)}
+.product-type-card small{font-size:10px;line-height:1.35;color:var(--muted);font-weight:500}
+@media(max-width:470px){.product-type-options{gap:6px}.product-type-card{padding:10px 7px}.product-type-card:has(input:checked){padding:9px 6px}.product-type-card strong{font-size:10px}.product-type-card small{font-size:9px}.product-type-icon{font-size:20px}}
