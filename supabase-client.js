@@ -289,12 +289,20 @@
     if (channel) await client.removeChannel(channel);
   }
 
+  async function onAuthStateChange(callback) {
+    const client = await init();
+    if (typeof callback !== 'function') throw new Error('Callback de autenticação inválido.');
+    const result = client.auth.onAuthStateChange(callback);
+    return result?.data?.subscription || result;
+  }
+
   window.VPASupabase = {
     state: state,
     isConfigured: function () { return state.configured; },
     getConfigStatus: status,
     init: init,
     getSession: getSession,
+    onAuthStateChange: onAuthStateChange,
     signIn: signIn,
     signUp: signUp,
     sendPasswordReset: sendPasswordReset,

@@ -335,11 +335,69 @@ async function requestTeamNotifications() {
   render();
 }
 
+let teamAuthListenerBound = false;
+let teamAutoNotificationAttempted = false;
+
+async function autoActivateTeamAfterLogin(session) {
+  if (!session?.user) return;
+  await initTeamRealtime();
+
+  // A permissão é específica por navegador/perfil. Se já foi concedida,
+  // não é necessário pedir novamente a cada login.
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted' || Notification.permission === 'denied') return;
+  if (teamAutoNotificationAttempted) return;
+
+  const alreadyPrompted = localStorage.getItem('vpa-team-notification-prompted') === '1';
+  if (alreadyPrompted) return;
+
+  teamAutoNotificationAttempted = true;
+  localStorage.setItem('vpa-team-notification-prompted', '1');
+
+  // Alguns navegadores exigem gesto do usuário para abrir o pedido.
+  // Tentamos uma vez após o login; se o navegador impedir, o botão
+  // manual continuará disponível em Ajustes.
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      showTeamToast('✅ Notificações da equipe ativadas automaticamente neste navegador.', 'success');
+    } else {
+      showTeamToast('🟡 Equipe online ativada. Para receber avisos, autorize as notificações em Ajustes.', 'warning');
+    }
+    render();
+  } catch (error) {
+    console.warn('[VPA] O navegador não permitiu solicitar notificações automaticamente:', error);
+    showTeamToast('🟡 Equipe online ativada. Clique em “Ativar notificações” em Ajustes para autorizar os avisos.', 'warning');
+    render();
+  }
+}
+
+async function bindTeamAuthListener() {
+  if (teamAuthListenerBound || !window.VPASupabase?.onAuthStateChange) return;
+  teamAuthListenerBound = true;
+  try {
+    await window.VPASupabase.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+        window.setTimeout(() => autoActivateTeamAfterLogin(session).catch((error) => {
+          console.warn('[VPA] Falha ao ativar equipe após login:', error);
+        }), 0);
+      }
+    });
+  } catch (error) {
+    teamAuthListenerBound = false;
+    console.warn('[VPA] Não foi possível registrar o listener de login:', error);
+  }
+}
+
 async function initTeamRealtime() {
   if (teamRealtimeActive || !window.VPASupabase || !window.VPASupabase.isConfigured()) return;
   try {
     const session = await window.VPASupabase.getSession();
-    teamRealtimeUserId = session?.user?.id || null;
+    if (!session?.user?.id) {
+      teamRealtimeUserId = null;
+      return;
+    }
+    teamRealtimeUserId = session.user.id;
     await mergeCloudBatidas();
     teamRealtimeChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     teamRealtimeActive = true;
@@ -880,4 +938,11 @@ $('productForm').addEventListener('submit', async (e) => {
   render();
 });
 $('restoreInput').onchange = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async () => { try { data = JSON.parse(reader.result); seed(); data.corridors.forEach((c) => { if (!c.name) c.name = `Corredor ${c.number}`; }); await save(); render(); alert('Backup restaurado com sucesso.'); } catch { alert('Backup inválido.'); } }; reader.readAsText(file); };
-(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render(); setTimeout(initTeamRealtime, 900); })();
+(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
+  setTimeout(() => {
+    bindTeamAuthListener().catch(() => {});
+    initTeamRealtime().then(() => {
+      window.VPASupabase?.getSession?.().then((session) => autoActivateTeamAfterLogin(session)).catch(() => {});
+    }).catch(() => {});
+  }, 900);
+})();
