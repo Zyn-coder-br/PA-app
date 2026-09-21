@@ -310,3 +310,71 @@ body{
     row-gap:18px !important;
   }
 }
+
+/* ===== VPA AUTH LOGIN — referência visual 3:4 ===== */
+.vpa-auth-dialog{width:min(1120px,94vw);max-width:none;padding:0;border:0;border-radius:26px;overflow:hidden;background:transparent;box-shadow:0 28px 90px #062e254d}
+.vpa-auth-dialog::backdrop{background:linear-gradient(135deg,#052e2bd9,#0a493fd9);backdrop-filter:blur(9px)}
+.vpa-auth-shell{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(420px,1.1fr);min-height:650px;background:linear-gradient(135deg,#063f37,#0b5a49 52%,#0c403b)}
+.vpa-auth-brand{position:relative;padding:42px 38px 34px;color:#fff;display:flex;flex-direction:column;justify-content:center;overflow:hidden;background:radial-gradient(circle at 20% 10%,#1b7b5b55,transparent 38%),linear-gradient(145deg,#063d35,#062e2b)}
+.vpa-auth-brand:after{content:"";position:absolute;inset:auto -80px -130px -80px;height:280px;border-radius:50%;background:#ffffff08;transform:rotate(-10deg)}
+.vpa-auth-version{position:absolute;top:24px;right:28px;font-size:12px;color:#e1f3eb}
+.vpa-auth-logo{text-align:left;margin-bottom:35px}
+.vpa-auth-cart{font-size:58px;line-height:1;color:#fff;letter-spacing:-12px;margin-bottom:12px}
+.vpa-auth-cart span{font-size:35px;color:#ffd400;vertical-align:top;position:relative;left:-5px;top:-18px}
+.vpa-auth-brand-name{font-size:clamp(27px,3vw,42px);font-weight:950;letter-spacing:-1.7px;white-space:nowrap}
+.vpa-auth-brand-name strong{color:#ffd400}
+.vpa-auth-tagline{font-size:11px;letter-spacing:.6px;margin-top:7px;color:#d5eee5}
+.vpa-auth-benefits{display:grid;gap:20px;position:relative;z-index:1}
+.vpa-auth-benefits>div{display:flex;gap:14px;align-items:flex-start}
+.vpa-auth-benefits b{width:48px;height:48px;display:grid;place-items:center;border-radius:15px;background:#0d7654;color:#ffd400;font-size:28px;flex:0 0 auto}
+.vpa-auth-benefits strong,.vpa-auth-benefits span{display:block}
+.vpa-auth-benefits strong{font-size:17px;margin-bottom:3px}
+.vpa-auth-benefits span{font-size:12px;line-height:1.4;color:#c9e5da;max-width:210px}
+.vpa-auth-slogan{position:relative;z-index:1;margin-top:35px;padding-top:17px;border-top:4px solid #ffd400;width:max-content;max-width:100%;font-size:16px;line-height:1.45;font-weight:800}
+.vpa-auth-card{background:#fff;padding:42px 46px 28px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.vpa-auth-welcome{text-align:center;margin-bottom:27px}
+.vpa-auth-welcome .eyebrow{color:#2c8e67}
+.vpa-auth-welcome h2{font-size:clamp(25px,3vw,34px);letter-spacing:-1px;margin:9px 0 8px;color:#142d38}
+.vpa-auth-welcome p{margin:0;color:#61757e;font-size:14px}
+.vpa-auth-field{display:flex;align-items:center;gap:12px;border:1px solid #d6e0e2;border-radius:14px;padding:0 16px;margin:12px 0;background:#fff;min-height:62px;color:#193642;font-size:23px;box-shadow:0 3px 12px #123d2410}
+.vpa-auth-field:focus-within{border-color:#2b996b;box-shadow:0 0 0 3px #2b996b18}
+.vpa-auth-field input{width:100%;border:0;outline:0;background:transparent;font-size:16px;color:#142d38;min-width:0}
+.vpa-auth-field input::placeholder{color:#91a0b2}
+.vpa-password-toggle{border:0;background:transparent;color:#173b48;font-size:19px;padding:4px}
+.vpa-auth-options{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:15px 2px 4px;font-size:12px}
+.vpa-remember{display:flex;align-items:center;gap:6px;color:#314952}
+.vpa-remember input{accent-color:#198653;width:17px;height:17px}
+.vpa-forgot{color:#198653;font-weight:850}
+.vpa-auth-message{min-height:18px;margin:7px 0;text-align:center;color:#c14e43}
+.vpa-auth-submit{width:100%;min-height:58px;border-radius:13px;font-size:17px;margin-top:5px;background:#148653}
+.vpa-auth-notice{display:flex;align-items:center;gap:12px;background:#edf7f1;border-radius:14px;padding:15px;margin-top:18px;color:#287653}
+.vpa-auth-notice>b{font-size:27px}
+.vpa-auth-notice strong,.vpa-auth-notice span{display:block}
+.vpa-auth-notice strong{font-size:12px}
+.vpa-auth-notice span{font-size:11px;color:#66827a;margin-top:4px;line-height:1.35}
+.vpa-auth-divider{display:flex;align-items:center;gap:12px;color:#91a0a4;font-size:12px;margin:22px 0}
+.vpa-auth-divider:before,.vpa-auth-divider:after{content:"";height:1px;background:#dce5e3;flex:1}
+.vpa-local-note{display:flex;align-items:center;gap:12px;border:1px solid #e0e8e8;border-radius:14px;padding:14px;color:#20414c;background:#f8faf9}
+.vpa-local-note>b{font-size:24px;color:#166e50}
+.vpa-local-note strong,.vpa-local-note span{display:block}
+.vpa-local-note strong{font-size:13px}
+.vpa-local-note div span{font-size:11px;color:#7b8c92;margin-top:3px}
+.vpa-local-note>span{margin-left:auto;font-size:26px}
+.vpa-auth-quote{text-align:center;color:#6c8086;font-size:12px;font-style:italic;margin-top:27px;line-height:1.45}
+.vpa-auth-quote small{display:block;font-style:normal;font-size:9px;letter-spacing:.8px;margin-top:13px;color:#2a8562;font-weight:850}
+@media(max-width:760px){
+ .vpa-auth-dialog{width:96vw;max-height:94vh;border-radius:20px}
+ .vpa-auth-shell{grid-template-columns:1fr;max-height:94vh;overflow:auto}
+ .vpa-auth-brand{padding:30px 25px 25px;min-height:270px}
+ .vpa-auth-logo{text-align:center;margin-bottom:20px}
+ .vpa-auth-cart{font-size:42px}
+ .vpa-auth-brand-name{font-size:29px}
+ .vpa-auth-benefits{grid-template-columns:1fr 1fr;gap:14px}
+ .vpa-auth-benefits>div{gap:8px}
+ .vpa-auth-benefits b{width:34px;height:34px;border-radius:10px;font-size:19px}
+ .vpa-auth-benefits strong{font-size:12px}
+ .vpa-auth-benefits span{font-size:10px}
+ .vpa-auth-slogan{margin-top:20px;font-size:12px}
+ .vpa-auth-card{padding:30px 22px 24px}
+ .vpa-auth-quote{display:none}
+}
