@@ -175,6 +175,61 @@
     return results;
   }
 
+
+  const batchStatusMap = {
+    aberta: 'in_progress',
+    finalizada: 'completed',
+    cancelada: 'cancelled'
+  };
+
+  async function syncBatch(batch, corridorNumber) {
+    const client = await init();
+    const session = await getSession();
+    if (!session || !session.user) throw new Error('Nenhuma sessão autenticada encontrada.');
+    if (!batch || !batch.id) throw new Error('Batida sem identificador local.');
+    if (!Number.isFinite(Number(corridorNumber))) throw new Error('Batida sem número de corredor válido.');
+
+    const corridorResult = await client
+      .from('corridors')
+      .select('id, corridor_number')
+      .eq('corridor_number', Number(corridorNumber))
+      .eq('active', true)
+      .maybeSingle();
+    if (corridorResult.error) throw corridorResult.error;
+    if (!corridorResult.data) {
+      throw new Error('Corredor ' + corridorNumber + ' não encontrado no Supabase.');
+    }
+
+    const payload = {
+      id: batch.id,
+      corridor_id: corridorResult.data.id,
+      performed_by: session.user.id,
+      started_at: batch.startedAt || new Date().toISOString(),
+      completed_at: batch.finishedAt || null,
+      status: batchStatusMap[batch.status] || 'in_progress',
+      notes: batch.notes || null
+    };
+    const result = await client.from('batidas').upsert(payload, { onConflict: 'id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function syncBatches(batches, corridors) {
+    const list = Array.isArray(batches) ? batches : [];
+    const results = { total: list.length, synced: 0, failed: 0, errors: [] };
+    for (const batch of list) {
+      try {
+        const corridor = (Array.isArray(corridors) ? corridors : []).find((item) => item.id === batch.corridorId);
+        await syncBatch(batch, corridor?.number);
+        results.synced += 1;
+      } catch (error) {
+        results.failed += 1;
+        results.errors.push({ id: batch?.id || null, message: error?.message || 'Falha desconhecida' });
+      }
+    }
+    return results;
+  }
+
   window.VPASupabase = {
     state: state,
     isConfigured: function () { return state.configured; },
@@ -186,6 +241,8 @@
     getProfile: getProfile,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
+    syncBatch: syncBatch,
+    syncBatches: syncBatches,
     getClient: function () { return state.client; }
   };
 
