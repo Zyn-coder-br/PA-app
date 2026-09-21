@@ -230,6 +230,10 @@ let expiryFilter = localStorage.getItem('vpa-expiry-filter') || 'today';
 let pendingFilter = localStorage.getItem('vpa-pending-filter') || 'pique';
 let selectedProducts = new Set();
 let corridorEditMode = false;
+let teamRealtimeChannel = null;
+let teamRealtimeActive = false;
+let teamRealtimeUserId = null;
+let teamNotificationCount = 0;
 function pendingProductCard(p) {
   const d = daysTo(p.expiry);
   const label = d === 0 ? 'VENCE HOJE' : 'VENCE AMANHÃ';
@@ -249,10 +253,93 @@ function pending() {
   const title = pendingFilter === 'fefo' ? 'PIQUE FEFO' : 'PIQUE';
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Pendências</h2><p class="panel-sub">${title}: retire e confirme com uma foto cada produto que vence hoje ou amanhã.</p></div></div><div class="subnav"><button class="subnav-btn ${pendingFilter==='pique'?'active':''}" data-pending-filter="pique">🔴 PIQUE</button><button class="subnav-btn ${pendingFilter==='fefo'?'active':''}" data-pending-filter="fefo">🔵 PIQUE FEFO</button></div><div class="panel pending-panel">${pendingSection('Vence Hoje', todayList)}${pendingSection('Vence Amanhã', tomorrowList)}</div>`;
 }
+
+function showTeamToast(message, type = 'info') {
+  let toast = $('teamToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'teamToast';
+    toast.className = 'team-toast';
+    toast.setAttribute('role', 'status');
+    document.body.appendChild(toast);
+  }
+  toast.className = 'team-toast ' + type;
+  toast.textContent = message;
+  toast.hidden = false;
+  window.clearTimeout(showTeamToast.timer);
+  showTeamToast.timer = window.setTimeout(() => { toast.hidden = true; }, 6500);
+}
+
+function notifyTeamEvent(payload) {
+  const row = payload?.new || payload?.record || {};
+  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  if (!row.id || row.performed_by === teamRealtimeUserId) return;
+  const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
+  const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
+  const statusLabel = row.status === 'completed' ? 'concluiu' : row.status === 'cancelled' ? 'cancelou' : 'iniciou/atualizou';
+  const message = `Equipe: alguém ${statusLabel} uma batida no ${corridorLabel}.`;
+  teamNotificationCount += 1;
+  showTeamToast('🔔 ' + message, 'team');
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/icon-192.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
+  }
+}
+
+async function mergeCloudBatidas() {
+  if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
+  try {
+    const rows = await window.VPASupabase.listBatidas();
+    const localById = new Map(data.batches.map((b) => [String(b.id), b]));
+    const statusMap = { in_progress: 'aberta', completed: 'finalizada', cancelled: 'cancelada' };
+    rows.forEach((row) => {
+      const local = localById.get(String(row.id)) || {};
+      const corridor = data.corridors.find((c) => String(c.number) === String(row.corridor_id));
+      const merged = {
+        ...local,
+        id: row.id,
+        corridorId: local.corridorId || corridor?.id || null,
+        corridorName: local.corridorName || corridor?.name || ('Corredor ' + (row.corridor_id || '')),
+        date: local.date || (row.started_at || row.created_at || '').slice(0, 10),
+        startedAt: row.started_at || local.startedAt,
+        finishedAt: row.completed_at || local.finishedAt || null,
+        status: statusMap[row.status] || local.status || 'aberta',
+        cloudId: row.corridor_id,
+        performedBy: row.performed_by || local.performedBy || null
+      };
+      localById.set(String(row.id), merged);
+    });
+    data.batches = Array.from(localById.values()).sort((a, b) => String(b.startedAt || b.date || '').localeCompare(String(a.startedAt || a.date || '')));
+    await save();
+    render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar batidas da equipe:', error.message || error);
+  }
+}
+
+async function requestTeamNotifications() {
+  if (!('Notification' in window)) { showTeamToast('Este navegador não oferece notificações.', 'warning'); return; }
+  const permission = await Notification.requestPermission();
+  showTeamToast(permission === 'granted' ? '✅ Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas.', permission === 'granted' ? 'success' : 'warning');
+}
+
+async function initTeamRealtime() {
+  if (teamRealtimeActive || !window.VPASupabase || !window.VPASupabase.isConfigured()) return;
+  try {
+    const session = await window.VPASupabase.getSession();
+    teamRealtimeUserId = session?.user?.id || null;
+    await mergeCloudBatidas();
+    teamRealtimeChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
+    teamRealtimeActive = true;
+    showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
+  } catch (error) {
+    console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
+  }
+}
+
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Equipe online</div><p class="panel-sub">Carrega batidas compartilhadas e recebe atualizações dos outros usuários enquanto o aplicativo estiver conectado.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Ativar notificações</button><button class="secondary" id="reloadTeamBatches">↻ Atualizar equipe</button></div><p class="panel-sub">${teamRealtimeActive ? "🟢 Conectado ao canal de batidas" : "🟡 Aguardando conexão"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const items = {
@@ -371,6 +458,7 @@ async function startBatch(event) {
   data.batches.push(batch);
   data.activeBatchId = batch.id;
   await save();
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   $('batchDialog').close();
   view = 'batches';
   render();
@@ -399,6 +487,7 @@ async function cancelOpenBatch() {
   batch.finishedAt = new Date().toISOString();
   data.activeBatchId = null;
   await save();
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
 async function finishBatch() {
@@ -409,7 +498,9 @@ async function finishBatch() {
   batch.status = 'finalizada';
   batch.finishedAt = new Date().toISOString();
   const c = data.corridors.find((x) => x.id === batch.corridorId); if (c) c.lastCheck = today();
-  data.activeBatchId = null; await save(); render();
+  data.activeBatchId = null; await save();
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  render();
 }
 async function lookupEAN(ean) {
   const code = String(ean || '').replace(/\D/g, '');
@@ -685,6 +776,8 @@ function bind() {
   $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
+  $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
+  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
@@ -774,4 +867,4 @@ $('productForm').addEventListener('submit', async (e) => {
   render();
 });
 $('restoreInput').onchange = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async () => { try { data = JSON.parse(reader.result); seed(); data.corridors.forEach((c) => { if (!c.name) c.name = `Corredor ${c.number}`; }); await save(); render(); alert('Backup restaurado com sucesso.'); } catch { alert('Backup inválido.'); } }; reader.readAsText(file); };
-(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render(); })();
+(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render(); setTimeout(initTeamRealtime, 900); })();

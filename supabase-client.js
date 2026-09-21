@@ -230,6 +230,35 @@
     return results;
   }
 
+  async function listBatidas() {
+    const client = await init();
+    const result = await client
+      .from('batidas')
+      .select('id, corridor_id, performed_by, started_at, completed_at, status, notes, created_at')
+      .order('started_at', { ascending: false })
+      .limit(200);
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function subscribeBatidas(onChange) {
+    const client = await init();
+    if (typeof onChange !== 'function') throw new Error('Callback de batidas inválido.');
+    const channel = client
+      .channel('vpa-batidas-equipe')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'batidas' }, function (payload) {
+        try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de batida:', error); }
+      });
+    const status = await channel.subscribe();
+    if (status !== 'SUBSCRIBED') console.warn('[VPA] Canal de batidas não confirmou inscrição:', status);
+    return channel;
+  }
+
+  async function unsubscribe(channel) {
+    const client = await init();
+    if (channel) await client.removeChannel(channel);
+  }
+
   window.VPASupabase = {
     state: state,
     isConfigured: function () { return state.configured; },
@@ -243,6 +272,9 @@
     syncProducts: syncProducts,
     syncBatch: syncBatch,
     syncBatches: syncBatches,
+    listBatidas: listBatidas,
+    subscribeBatidas: subscribeBatidas,
+    unsubscribe: unsubscribe,
     getClient: function () { return state.client; }
   };
 

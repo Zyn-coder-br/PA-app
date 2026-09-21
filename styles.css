@@ -400,3 +400,9 @@ body{
 .product-type-card strong{font-size:12px;line-height:1.25;color:var(--ink)}
 .product-type-card small{font-size:10px;line-height:1.35;color:var(--muted);font-weight:500}
 @media(max-width:470px){.product-type-options{gap:6px}.product-type-card{padding:10px 7px}.product-type-card:has(input:checked){padding:9px 6px}.product-type-card strong{font-size:10px}.product-type-card small{font-size:9px}.product-type-icon{font-size:20px}}
+
+
+.team-toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 10000; width: min(92vw, 460px); padding: 14px 16px; border-radius: 14px; background: #173f31; color: #fff; box-shadow: 0 12px 36px rgba(0,0,0,.24); font-weight: 700; line-height: 1.35; }
+.team-toast.success { background: #147d4d; }
+.team-toast.warning { background: #98620d; }
+.team-toast[hidden] { display: none; }
