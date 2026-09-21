@@ -251,7 +251,7 @@ function pending() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const items = {
@@ -607,6 +607,35 @@ async function confirmPique() {
   piquePhotoData = '';
   render();
 }
+async function syncLocalProductsToCloud() {
+  const status = $('syncProductsStatus');
+  const button = $('syncProductsBtn');
+  if (!window.VPASupabase || !window.VPASupabase.isConfigured()) {
+    if (status) status.textContent = 'Supabase não configurado nesta versão.';
+    return;
+  }
+  if (!data.products.length) {
+    if (status) status.textContent = 'Nenhum produto local para sincronizar.';
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Sincronizando produtos...';
+  const productsWithNumbers = data.products.map((product) => {
+    const corridor = data.corridors.find((item) => item.id === product.corridorId);
+    return { ...product, corridorNumber: corridor?.number };
+  });
+  try {
+    const result = await window.VPASupabase.syncProducts(productsWithNumbers);
+    result.errors.forEach((item) => console.warn('[VPA] Falha ao sincronizar produto:', item));
+    if (status) status.textContent = `Sincronização concluída: ${result.synced} enviados, ${result.failed} com falha de ${result.total}.`;
+  } catch (error) {
+    console.error('[VPA] Falha na sincronização:', error);
+    if (status) status.textContent = 'Falha na sincronização: ' + (error.message || 'erro desconhecido');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function bind() {
   document.querySelectorAll('[data-open-pique]').forEach((b) => b.addEventListener('click', () => openPiqueDialog(b.dataset.openPique)));
   $('closePiqueDialog')?.addEventListener('click', () => $('piqueDialog').close());
@@ -628,6 +657,7 @@ function bind() {
   $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
+  $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
   document.querySelectorAll('[data-subnav]').forEach((b) => b.addEventListener('click', () => {
     const filter = b.dataset.subnav;

@@ -108,6 +108,73 @@
     return true;
   }
 
+  async function getProfile(userId) {
+    const client = await init();
+    if (!userId) return null;
+    const result = await client.from('profiles').select('id, full_name, role, active').eq('id', userId).maybeSingle();
+    if (result.error) throw result.error;
+    return result.data || null;
+  }
+
+
+  const statusMap = {
+    corredor: 'in_corridor',
+    vencimento: 'found',
+    separado: 'separated',
+    resolvido: 'resolved'
+  };
+
+  async function syncProduct(product, corridorNumber) {
+    const client = await init();
+    const session = await getSession();
+    if (!session || !session.user) throw new Error('Nenhuma sessão autenticada encontrada.');
+    if (!product || !product.id) throw new Error('Produto sem identificador local.');
+    if (!Number.isFinite(Number(corridorNumber))) throw new Error('Corredor local sem número válido.');
+
+    const corridorResult = await client
+      .from('corridors')
+      .select('id, corridor_number')
+      .eq('corridor_number', Number(corridorNumber))
+      .eq('active', true)
+      .maybeSingle();
+    if (corridorResult.error) throw corridorResult.error;
+    if (!corridorResult.data) {
+      throw new Error('Corredor ' + corridorNumber + ' não encontrado no Supabase. Cadastre-o na tabela corridors antes de sincronizar.');
+    }
+
+    const payload = {
+      id: product.id,
+      name: String(product.name || '').trim(),
+      ean: product.ean ? String(product.ean).trim() : null,
+      corridor_id: corridorResult.data.id,
+      quantity_found: Math.max(0, Number(product.quantity || product.quantityFound || 0)),
+      quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
+      expiration_date: product.expiry || null,
+      status: statusMap[product.status] || 'found',
+      registered_by: session.user.id
+    };
+    if (!payload.name) throw new Error('Produto sem nome.');
+    const result = await client.from('products').upsert(payload, { onConflict: 'id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function syncProducts(products) {
+    const list = Array.isArray(products) ? products : [];
+    const results = { total: list.length, synced: 0, failed: 0, errors: [] };
+    for (const product of list) {
+      try {
+        const number = product.corridorNumber ?? product.corridor?.number;
+        await syncProduct(product, number);
+        results.synced += 1;
+      } catch (error) {
+        results.failed += 1;
+        results.errors.push({ id: product?.id || null, name: product?.name || 'Produto', message: error?.message || 'Falha desconhecida' });
+      }
+    }
+    return results;
+  }
+
   window.VPASupabase = {
     state: state,
     isConfigured: function () { return state.configured; },
@@ -116,6 +183,9 @@
     getSession: getSession,
     signIn: signIn,
     signOut: signOut,
+    getProfile: getProfile,
+    syncProduct: syncProduct,
+    syncProducts: syncProducts,
     getClient: function () { return state.client; }
   };
 
