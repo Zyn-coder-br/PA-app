@@ -316,10 +316,23 @@ async function mergeCloudBatidas() {
   }
 }
 
+function teamNotificationPermissionLabel() {
+  if (!('Notification' in window)) return 'Este navegador não oferece notificações.';
+  if (Notification.permission === 'granted') return '🟢 Notificações autorizadas neste navegador.';
+  if (Notification.permission === 'denied') return '🔴 Notificações bloqueadas. Clique no ícone de cadeado/configurações do site e permita Notificações.';
+  return '🟡 Permissão de notificações ainda não definida neste navegador.';
+}
+
 async function requestTeamNotifications() {
   if (!('Notification' in window)) { showTeamToast('Este navegador não oferece notificações.', 'warning'); return; }
+  if (Notification.permission === 'denied') {
+    showTeamToast('🔴 As notificações estão bloqueadas neste navegador. Abra as configurações do site e permita Notificações.', 'warning');
+    render();
+    return;
+  }
   const permission = await Notification.requestPermission();
-  showTeamToast(permission === 'granted' ? '✅ Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas.', permission === 'granted' ? 'success' : 'warning');
+  showTeamToast(permission === 'granted' ? '✅ Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas. Verifique a permissão do site no navegador.', permission === 'granted' ? 'success' : 'warning');
+  render();
 }
 
 async function initTeamRealtime() {
@@ -339,7 +352,7 @@ async function initTeamRealtime() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Equipe online</div><p class="panel-sub">Carrega batidas compartilhadas e recebe atualizações dos outros usuários enquanto o aplicativo estiver conectado.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Ativar notificações</button><button class="secondary" id="reloadTeamBatches">↻ Atualizar equipe</button></div><p class="panel-sub">${teamRealtimeActive ? "🟢 Conectado ao canal de batidas" : "🟡 Aguardando conexão"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Equipe online</div><p class="panel-sub">Carrega batidas compartilhadas e recebe atualizações dos outros usuários enquanto o aplicativo estiver conectado.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Ativar notificações</button><button class="secondary" id="reloadTeamBatches">↻ Atualizar equipe</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Conectado ao canal de batidas" : "🟡 Aguardando conexão"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const items = {
