@@ -1,15 +1,27 @@
-# Vencimento PA Local V4
+# Vencimento PA Local — V8
 
-Versão estática para publicação no GitHub Pages, sem Node.js no celular.
+PWA local para controle de vencimentos, batidas e pendências.
 
-Funções incluídas:
-- Painel com indicadores e progresso mensal;
-- Cadastro e edição de produtos;
-- Busca e filtros de produtos;
-- Início e finalização de batida por corredor;
-- Vínculo de produtos à batida aberta;
-- Atualização de pendências para separado ou resolvido;
-- Backup e restauração em JSON;
-- IndexedDB local e PWA.
+## Atualizações desta versão
+- Subcategorias de Vencimentos: hoje, amanhã, 2–10 dias, 11–30 dias e 31 dias+.
+- Contagem regressiva de dias em cada produto.
+- Pendências separadas em PIQUE e PIQUE FEFO.
+- Seleção em massa: marcar/desmarcar, alterar status, adicionar tag PLU/ETIQUETA e excluir.
+- Campo de tag PLU/ETIQUETA e identificação de produto FEFO no cadastro.
+- Cancelamento de batida em andamento sem marcar o corredor como conferido.
+- Finalização de batida continua bloqueada sem produto.
+- Navegação flutuante no canto inferior direito.
+- Banco local via IndexedDB, backup/restauração e tema claro/escuro.
+- Leitor EAN e consulta à Open Food Facts mantidos.
 
-Publique os arquivos desta pasta na raiz do repositório do GitHub Pages.
+## Publicação pelo celular
+Suba os arquivos desta pasta na raiz do repositório do GitHub Pages ou substitua os arquivos da versão anterior. Aguarde o GitHub Pages atualizar e faça uma atualização forçada no navegador.
+
+
+V3 visual: painel com hero verde e identidade visual profissional, preservando a navegação e os módulos existentes.
+
+
+## V6.1 - Ajuste reforçado de espaçamento
+- Aumentado o espaço entre cards e blocos do painel.
+- Aplicados espaçamentos verticais e horizontais com seletores específicos.
+- Mantida a lógica JavaScript original da V8.2.6.
