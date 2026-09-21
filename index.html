@@ -9,7 +9,7 @@
 <div id="app">
 <header class="app-header">
   <div class="brand-area"><div class="brand-mark">🛒</div><div><div class="brand-name">VENCIMENTO <span>PA</span></div><div class="brand-subtitle">Prevenção hoje, resultados sempre!</div></div></div>
-  <div class="user-area"><div><strong>Olá, Ramon! 👋</strong><small>Pleno 2 | Administrador</small></div><div class="avatar">R</div><button class="header-icon" id="settingsShortcut" aria-label="Abrir ajustes">⚙</button></div>
+  <div class="user-area"><div><strong id="vpaHeaderUserName">Olá, Ramon! 👋</strong><small id="vpaHeaderUserRole">Pleno 2 | Administrador</small></div><div class="avatar" id="vpaHeaderAvatar">R</div><button class="header-icon" id="vpaLogoutButton" aria-label="Sair da conta" title="Sair">↪</button><button class="header-icon" id="settingsShortcut" aria-label="Abrir ajustes">⚙</button></div>
 </header>
 <main id="view"></main>
 <button class="floating-nav-trigger" id="floatingNavTrigger" aria-label="Abrir navegação">＋</button>
@@ -67,10 +67,7 @@
   </div>
 </dialog>
 <input id="restoreInput" type="file" accept="application/json" hidden>
-<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = {
-  url: "https://vwzdzmfewqkzaokdwzyj.supabase.co",
-  anonKey: "sb_publishable_Sw0O5MWTbjr11gnhnDZQPQ_DHnzUD0u"
-};</script>
+<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = { url: "", anonKey: "" };</script>
 <script>
 (function () {
   'use strict';
@@ -79,16 +76,39 @@
     var el = byId('vpaAuthMessage');
     if (el) el.textContent = text || '';
   }
+  function showLogin() {
+    var dialog = byId('vpaAuthDialog');
+    if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+  }
+  function setLoggedUser(user) {
+    var name = user && user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name);
+    var email = user && user.email;
+    var display = name || email || 'Usuário autenticado';
+    var first = display.trim().charAt(0).toUpperCase() || 'U';
+    var nameEl = byId('vpaHeaderUserName');
+    var avatarEl = byId('vpaHeaderAvatar');
+    if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
+    if (avatarEl) avatarEl.textContent = first;
+  }
   async function setupAuth() {
     if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
     try {
       var session = await window.VPASupabase.getSession();
-      if (!session) {
-        var dialog = byId('vpaAuthDialog');
-        if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      if (!session) showLogin();
+      else setLoggedUser(session.user);
+      var client = window.VPASupabase.getClient && window.VPASupabase.getClient();
+      if (client && client.auth && client.auth.onAuthStateChange) {
+        client.auth.onAuthStateChange(function (event, nextSession) {
+          if (nextSession && nextSession.user) {
+            setLoggedUser(nextSession.user);
+          } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESH_FAILED') {
+            showLogin();
+          }
+        });
       }
     } catch (error) {
       console.warn('[VPA] Falha ao verificar sessão:', error);
+      message('Não foi possível verificar a sessão.');
     }
   }
   document.addEventListener('DOMContentLoaded', function () {
@@ -100,10 +120,11 @@
         if (button) button.disabled = true;
         message('Entrando...');
         try {
-          await window.VPASupabase.signIn(
+          var result = await window.VPASupabase.signIn(
             byId('vpaAuthEmail').value.trim(),
             byId('vpaAuthPassword').value
           );
+          setLoggedUser(result && result.user);
           message('Login realizado.');
           var dialog = byId('vpaAuthDialog');
           if (dialog && typeof dialog.close === 'function') dialog.close();
@@ -111,6 +132,25 @@
           message(error && error.message ? error.message : 'Não foi possível entrar.');
         } finally {
           if (button) button.disabled = false;
+        }
+      });
+    }
+
+    var logout = byId('vpaLogoutButton');
+    if (logout) {
+      logout.addEventListener('click', async function () {
+        logout.disabled = true;
+        try {
+          if (window.VPASupabase && window.VPASupabase.signOut) {
+            await window.VPASupabase.signOut();
+          }
+          message('Sessão encerrada. Entre novamente para continuar.');
+          showLogin();
+        } catch (error) {
+          console.warn('[VPA] Falha ao sair:', error);
+          message('Não foi possível encerrar a sessão.');
+        } finally {
+          logout.disabled = false;
         }
       });
     }

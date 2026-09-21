@@ -378,3 +378,12 @@ body{
  .vpa-auth-card{padding:30px 22px 24px}
  .vpa-auth-quote{display:none}
 }
+
+/* VPA — sessão autenticada */
+#vpaLogoutButton {
+  color: #b42318;
+}
+#vpaLogoutButton:disabled {
+  opacity: .55;
+  cursor: wait;
+}
