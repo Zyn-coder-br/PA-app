@@ -1,19 +1,15 @@
-# Vencimento PA Local — Painel V4
+# Vencimento PA Local V4
 
-Versão local para publicação no GitHub Pages.
+Versão estática para publicação no GitHub Pages, sem Node.js no celular.
 
-## O que foi adicionado nesta versão
+Funções incluídas:
+- Painel com indicadores e progresso mensal;
+- Cadastro e edição de produtos;
+- Busca e filtros de produtos;
+- Início e finalização de batida por corredor;
+- Vínculo de produtos à batida aberta;
+- Atualização de pendências para separado ou resolvido;
+- Backup e restauração em JSON;
+- IndexedDB local e PWA.
 
-- Tela de Batida com corredor recomendado.
-- Lista de prioridades dos 22 corredores.
-- Classificação visual:
-  - Verde: 0–6 dias sem batida.
-  - Amarelo: 7–14 dias sem batida.
-  - Vermelho: 15 dias ou mais ou nunca realizada.
-- Histórico de batidas.
-- Botões para iniciar o corredor recomendado ou escolher outro corredor.
-
-## Importante
-
-Esta versão usa **IndexedDB local do navegador**. Ela ainda não está conectada ao Supabase.
-Os dados ficam neste dispositivo/navegador e devem ser preservados com backup.
+Publique os arquivos desta pasta na raiz do repositório do GitHub Pages.
