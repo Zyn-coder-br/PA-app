@@ -53,7 +53,7 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
+  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo || p.origemCadastro === 'lista-fefo'), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
 }
 function daysTo(date) {
   return Math.ceil((new Date(date + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
@@ -169,7 +169,8 @@ function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
   const filter = productFilter;
   const allVisible = visibleProducts();
-  const list = allVisible.filter((p) => filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : true);
+  // A lista geral exclui FEFO e Promotores; eles aparecem somente em suas categorias próprias.
+  const list = allVisible.filter((p) => filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : !p.fefo && !p.promotor);
   const searchValue = localStorage.getItem('vpa-product-search') || '';
   const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
   const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
