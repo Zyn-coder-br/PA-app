@@ -1,7 +1,19 @@
-# Vencimento PA Local — Painel V3
+# Vencimento PA Local — Painel V4
 
-Versão estática para publicação no GitHub Pages. Não exige Node.js, npm ou CMD para uso.
+Versão local para publicação no GitHub Pages.
 
-Arquivos principais: `index.html`, `styles.css`, `app.js`, `manifest.webmanifest` e `sw.js`.
+## O que foi adicionado nesta versão
 
-Os dados são armazenados localmente no navegador por IndexedDB. Faça backups regularmente.
+- Tela de Batida com corredor recomendado.
+- Lista de prioridades dos 22 corredores.
+- Classificação visual:
+  - Verde: 0–6 dias sem batida.
+  - Amarelo: 7–14 dias sem batida.
+  - Vermelho: 15 dias ou mais ou nunca realizada.
+- Histórico de batidas.
+- Botões para iniciar o corredor recomendado ou escolher outro corredor.
+
+## Importante
+
+Esta versão usa **IndexedDB local do navegador**. Ela ainda não está conectada ao Supabase.
+Os dados ficam neste dispositivo/navegador e devem ser preservados com backup.
