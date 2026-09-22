@@ -1088,25 +1088,52 @@ async function autoSyncAllOnLogin(reason = 'login') {
   if (!window.VPASupabase?.isConfigured?.()) return { skipped: true, reason: 'supabase-not-configured' };
   if (autoSyncInProgress) return autoSyncInProgress;
   autoSyncInProgress = (async () => {
-    const result = { products: null, batches: null, cloudLoaded: false };
+    const result = { products: null, batches: null, cloudLoaded: false, skippedExisting: true };
     try {
       console.info('[VPA] Sincronização automática iniciada:', reason);
-      const productsWithNumbers = data.products.map((product) => {
-        const corridor = data.corridors.find((item) => item.id === product.corridorId);
-        return { ...product, corridorNumber: corridor?.number };
-      });
-      if (productsWithNumbers.length && window.VPASupabase.syncProducts) {
-        result.products = await window.VPASupabase.syncProducts(productsWithNumbers);
+
+      // Primeiro lemos o estado da nuvem. Não devemos reenviar todos os
+      // registros locais ao entrar/recarregar, pois isso pode gerar UPDATEs
+      // artificiais no Realtime e provocar spam nos outros aparelhos.
+      const cloudProducts = window.VPASupabase.listProducts
+        ? await window.VPASupabase.listProducts()
+        : [];
+      const cloudProductIds = new Set((cloudProducts || []).map((row) => String(row.id)));
+      const pendingProducts = data.products
+        .filter((product) => !cloudProductIds.has(String(product.id)))
+        .map((product) => {
+          const corridor = data.corridors.find((item) => item.id === product.corridorId);
+          return { ...product, corridorNumber: corridor?.number };
+        });
+
+      // Somente produtos que ainda não existem na nuvem são enviados no login.
+      if (pendingProducts.length && window.VPASupabase.syncProducts) {
+        result.products = await window.VPASupabase.syncProducts(pendingProducts);
         result.products.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática do produto:', item));
+      } else {
+        result.products = { total: 0, synced: 0, failed: 0, skipped: data.products.length };
+        console.info('[VPA] Nenhum produto existente foi reenviado no login.');
       }
-      if (data.batches.length && window.VPASupabase.syncBatches) {
-        result.batches = await window.VPASupabase.syncBatches(data.batches, data.corridors);
+
+      // A mesma proteção vale para batidas: somente IDs ainda ausentes na
+      // nuvem são enviados automaticamente.
+      const cloudBatches = window.VPASupabase.listBatidas
+        ? await window.VPASupabase.listBatidas()
+        : [];
+      const cloudBatchIds = new Set((cloudBatches || []).map((row) => String(row.id)));
+      const pendingBatches = data.batches.filter((batch) => !cloudBatchIds.has(String(batch.id)));
+      if (pendingBatches.length && window.VPASupabase.syncBatches) {
+        result.batches = await window.VPASupabase.syncBatches(pendingBatches, data.corridors);
         result.batches.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática da batida:', item));
+      } else {
+        result.batches = { total: 0, synced: 0, failed: 0, skipped: data.batches.length };
+        console.info('[VPA] Nenhuma batida existente foi reenviada no login.');
       }
+
       await mergeCloudProducts();
       await mergeCloudBatidas();
       result.cloudLoaded = true;
-      console.info('[VPA] Sincronização automática concluída:', result);
+      console.info('[VPA] Sincronização automática concluída sem reenvio de registros existentes:', result);
       return result;
     } catch (error) {
       console.warn('[VPA] Sincronização automática após login falhou:', error.message || error);
