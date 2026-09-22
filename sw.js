@@ -1,7 +1,7 @@
-const CACHE = 'vpa-pwa-v8-notification-logo';
+const CACHE = 'vpa-pwa-v10-history-icon';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './supabase-client.js',
-  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-logo.png'
+  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-small.png', './icons/notification-logo.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -40,8 +40,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Vencimento PA';
   const options = {
     body: payload.body || 'Você tem uma nova atualização.',
-    icon: payload.icon || './icons/notification-logo.png',
-    badge: payload.badge || './icons/notification-logo.png',
+    icon: payload.icon || './icons/notification-small.png',
+    badge: payload.badge || './icons/notification-small.png',
     tag: payload.tag || 'vpa-push-notification',
     renotify: Boolean(payload.renotify),
     data: {

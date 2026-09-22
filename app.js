@@ -55,6 +55,22 @@ function seed() {
   data.activeBatchId ||= null;
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
 }
+function syncCorridorLastChecksFromBatches() {
+  const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
+  data.corridors.forEach((c) => {
+    const dates = finalized.filter((b) => b.corridorId === c.id).map((b) => b.date).filter(Boolean).sort();
+    const latest = dates[dates.length - 1];
+    if (latest && (!c.lastCheck || latest > c.lastCheck)) c.lastCheck = latest;
+  });
+}
+function dateOnlyDiff(fromDate, toDate = today()) {
+  if (!fromDate) return null;
+  const from = new Date(`${fromDate}T12:00:00`);
+  const to = new Date(`${toDate}T12:00:00`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  return Math.max(0, Math.floor((to - from) / 86400000));
+}
+
 function daysTo(date) {
   return Math.ceil((new Date(date + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
 }
@@ -139,6 +155,63 @@ function suggestedCorridor() {
     return a.lastCheck.localeCompare(b.lastCheck);
   })[0] || { number: 1, name: 'Corredor 1', lastCheck: null };
 }
+
+function daysWithoutCheck(corridor) {
+  if (!corridor?.lastCheck) return null;
+  return dateOnlyDiff(corridor.lastCheck);
+}
+function corridorAlert(corridor) {
+  const days = daysWithoutCheck(corridor);
+  if (days === null) return { label: 'Nunca conferido', tone: 'danger', rank: 999999 };
+  if (days >= 15) return { label: 'Alerta: mais de 15 dias sem supervisão', tone: 'danger', rank: days };
+  if (days >= 7) return { label: 'Atenção: 7–14 dias', tone: 'warn', rank: days };
+  return { label: 'Em dia', tone: 'ok', rank: days };
+}
+function corridorHistoryRows() {
+  return data.corridors.slice().sort((a, b) => {
+    const ad = daysWithoutCheck(a); const bd = daysWithoutCheck(b);
+    const ar = ad === null ? 999999 : ad; const br = bd === null ? 999999 : bd;
+    return ar - br || a.number - b.number;
+  }).map((c) => {
+    const days = daysWithoutCheck(c);
+    const alert = corridorAlert(c);
+    const countLabel = days === null ? '—' : `${days} dia${days === 1 ? '' : 's'}`;
+    return `<div class="product-row corridor-history-row"><div><div class="product-name">${esc(c.name || `Corredor ${c.number}`)}</div><div class="meta">Corredor ${esc(c.number)} → Data: ${fmt(c.lastCheck)}</div><div class="meta">Contagem de dias: ${days === null ? 'Sem batida registrada' : countLabel}</div><div class="meta">${esc(alert.label)}</div></div><span class="badge ${alert.tone === 'danger' ? 'danger' : alert.tone === 'warn' ? 'warn' : ''}">${days === null ? 'Sem registro' : countLabel}</span></div>`;
+  }).join('');
+}
+function batchHistoryRows() {
+  return data.batches.slice().filter((b) => b.status === 'finalizada').sort((a,b) => {
+    const ad = daysToDateValue(a.date); const bd = daysToDateValue(b.date);
+    return ad - bd || String(a.date || '').localeCompare(String(b.date || ''));
+  }).map((b) => {
+    const days = daysToDateValue(b.date);
+    const c = data.corridors.find((x) => x.id === b.corridorId);
+    const alert = corridorAlert(c || { lastCheck: b.date });
+    return `<div class="product-row"><div><div class="product-name">${esc(b.corridorName || c?.name || 'Corredor')}</div><div class="meta">Data: ${fmt(b.date)} · ${days} dia${days === 1 ? '' : 's'} desde a batida</div><div class="meta">${data.products.filter((p) => p.batchId === b.id).length} produtos registrados</div></div><span class="badge">Concluída</span></div>`;
+  }).join('');
+}
+function daysToDateValue(date) {
+  if (!date) return 999999;
+  return dateOnlyDiff(date);
+}
+async function notifyOverdueCorridors() {
+  const overdue = data.corridors.filter((c) => daysWithoutCheck(c) === null || daysWithoutCheck(c) >= 15);
+  if (!overdue.length || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const key = `vpa-overdue-corridors-${today()}`;
+  const already = JSON.parse(localStorage.getItem(key) || '[]');
+  const fresh = overdue.filter((c) => !already.includes(c.id));
+  if (!fresh.length) return;
+  try {
+    const registration = await navigator.serviceWorker?.ready;
+    for (const c of fresh) {
+      const days = daysWithoutCheck(c);
+      const options = { body: `${c.name}: ${days === null ? 'nunca conferido' : days + ' dias sem supervisão'}. Faça uma batida de validade.`, icon: './icons/notification-small.png', badge: './icons/notification-small.png', tag: `vpa-corridor-overdue-${c.id}`, renotify: true, data: { url: './' } };
+      if (registration?.showNotification) await registration.showNotification('Vencimento PA · Corredor em atraso', options);
+      else new Notification('Vencimento PA · Corredor em atraso', options);
+    }
+    localStorage.setItem(key, JSON.stringify([...already, ...fresh.map((c) => c.id)]));
+  } catch (error) { console.warn('[VPA] Não foi possível notificar corredores em atraso:', error); }
+}
 function dashboard() {
   const critical = data.products.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
   const attention = data.products.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
@@ -210,7 +283,7 @@ function batches() {
   const history = data.batches.slice().reverse();
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
   <div class="subnav"><button class="subnav-btn ${current?'active':''}" data-batch-tab="current">Batida atual</button><button class="subnav-btn ${!current?'active':''}" data-batch-tab="history">Histórico</button></div>
-  ${current ? (active ? `<div class="panel"><div class="panel-title">Batida em andamento</div><div class="panel-sub">${esc(active.corridorName)} · iniciada em ${fmt(active.date)}</div><div class="toolbar"><button class="primary" id="addBatchProduct">+ Produto desta batida</button><button class="secondary" id="cancelOpenBatch">Cancelar batida</button><button class="secondary" id="finishBatch" ${activeProducts.length ? '' : 'disabled'}>Finalizar batida</button></div><div class="meta">Produtos vinculados: ${activeProducts.length}</div><div class="batch-products"><h3>Produtos desta batida (${activeProducts.length})</h3>${groupedProductRows(activeProducts) || '<div class="empty">Nenhum produto cadastrado nesta batida.</div>'}</div></div>` : `<div class="panel empty">Nenhuma batida em andamento. Toque em + Registrar para começar.</div>`) : `<div class="panel"><p class="panel-sub">Histórico de batidas salvo neste dispositivo.</p><div class="list">${history.map((b) => `<div class="product-row"><div><div class="product-name">${esc(b.corridorName)}</div><div class="meta">${fmt(b.date)} · ${b.status === 'aberta' ? 'Em andamento' : b.status === 'cancelada' ? 'Cancelada' : 'Finalizada'} · ${data.products.filter((p) => p.batchId === b.id).length} produtos</div></div><span class="badge ${b.status !== 'finalizada' ? 'warn' : ''}">${b.status === 'aberta' ? 'Aberta' : b.status === 'cancelada' ? 'Cancelada' : 'Concluída'}</span></div>`).join('') || '<div class="empty">Nenhuma batida registrada.</div>'}</div></div>`}`;
+  ${current ? (active ? `<div class="panel"><div class="panel-title">Batida em andamento</div><div class="panel-sub">${esc(active.corridorName)} · iniciada em ${fmt(active.date)}</div><div class="toolbar"><button class="primary" id="addBatchProduct">+ Produto desta batida</button><button class="secondary" id="cancelOpenBatch">Cancelar batida</button><button class="secondary" id="finishBatch" ${activeProducts.length ? '' : 'disabled'}>Finalizar batida</button></div><div class="meta">Produtos vinculados: ${activeProducts.length}</div><div class="batch-products"><h3>Produtos desta batida (${activeProducts.length})</h3>${groupedProductRows(activeProducts) || '<div class="empty">Nenhum produto cadastrado nesta batida.</div>'}</div></div>` : `<div class="panel empty">Nenhuma batida em andamento. Toque em + Registrar para começar.</div>`) : `<div class="panel"><p class="panel-sub">Histórico organizado pela contagem crescente de dias.</p><div class="panel-head"><div class="panel-title">Supervisão dos 22 corredores</div><span class="panel-sub">0–6 verde · 7–14 amarelo · 15+ vermelho</span></div><div class="list">${corridorHistoryRows() || '<div class="empty">Nenhum corredor cadastrado.</div>'}</div><div class="panel-head" style="margin-top:18px"><div class="panel-title">Batidas realizadas</div><span class="panel-sub">Corredor → Data</span></div><div class="list">${batchHistoryRows() || '<div class="empty">Nenhuma batida finalizada.</div>'}</div></div>`}`;
 }
 function expiries() {
   const tabs = [['today','Vence hoje'],['tomorrow','Vence amanhã'],['ten','2–10 dias'],['thirty','11–30 dias'],['future','31 dias+']];
@@ -281,7 +354,7 @@ function notifyTeamEvent(payload) {
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
   if ('Notification' in window && Notification.permission === 'granted') {
-    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/notification-logo.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
+    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/notification-small.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
   }
 }
 
@@ -344,8 +417,8 @@ async function testAndroidNotification() {
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification('Vencimento PA · Teste Android', {
       body: 'Teste concluído: esta é uma notificação local do aplicativo.',
-      icon: './icons/notification-logo.png',
-      badge: './icons/notification-logo.png',
+      icon: './icons/notification-small.png',
+      badge: './icons/notification-small.png',
       tag: 'vpa-android-test-' + Date.now(),
       renotify: true,
       vibrate: [180, 80, 220],
@@ -446,7 +519,7 @@ async function initTeamRealtime() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações</div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Use esta opção apenas para autorizar os avisos do navegador neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V10</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Use esta opção apenas para autorizar os avisos do navegador neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1058,4 +1131,5 @@ function installHeaderBehavior() {
       window.VPASupabase?.getSession?.().then((session) => autoActivateTeamAfterLogin(session)).catch(() => {});
     }).catch(() => {});
   }, 900);
+  setTimeout(() => notifyOverdueCorridors().catch(() => {}), 1600);
 })();
