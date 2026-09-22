@@ -1,7 +1,7 @@
-const CACHE = 'vpa-pwa-v7-android-test';
+const CACHE = 'vpa-pwa-v8-notification-logo';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './supabase-client.js',
-  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
+  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-logo.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -24,7 +24,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Base for Web Push notifications.
+// Base for Web Push notifications. The Vencimento PA logo is used by default.
+
 // The server will send a JSON payload such as:
 // { title, body, icon, badge, tag, url, data }
 self.addEventListener('push', (event) => {
@@ -39,8 +40,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Vencimento PA';
   const options = {
     body: payload.body || 'Você tem uma nova atualização.',
-    icon: payload.icon || './icons/icon-192.png',
-    badge: payload.badge || './icons/icon-192.png',
+    icon: payload.icon || './icons/notification-logo.png',
+    badge: payload.badge || './icons/notification-logo.png',
     tag: payload.tag || 'vpa-push-notification',
     renotify: Boolean(payload.renotify),
     data: {

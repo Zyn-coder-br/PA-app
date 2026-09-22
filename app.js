@@ -281,7 +281,7 @@ function notifyTeamEvent(payload) {
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
   if ('Notification' in window && Notification.permission === 'granted') {
-    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/icon-192.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
+    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/notification-logo.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
   }
 }
 
@@ -344,8 +344,8 @@ async function testAndroidNotification() {
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification('Vencimento PA · Teste Android', {
       body: 'Teste concluído: esta é uma notificação local do aplicativo.',
-      icon: './icons/icon-192.png',
-      badge: './icons/icon-192.png',
+      icon: './icons/notification-logo.png',
+      badge: './icons/notification-logo.png',
       tag: 'vpa-android-test-' + Date.now(),
       renotify: true,
       vibrate: [180, 80, 220],

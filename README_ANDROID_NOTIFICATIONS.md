@@ -21,3 +21,8 @@ Os arquivos em `sounds/` são toques originais de referência para futuras integ
 ## V7 — Teste Android
 
 O botão de teste usa Service Worker `showNotification`, inclui vibração quando o Android/navegador permitir e utiliza uma tag única para evitar que um teste substitua o anterior. O som personalizado ainda não pode ser forçado por Web Push no navegador; ele depende das configurações do Android/canal de notificação.
+
+
+## V8 — Logo nas notificações
+
+As notificações locais e a base de Web Push usam `icons/notification-logo.png` como `icon` e `badge`. O cache do Service Worker foi atualizado para forçar a carga do novo recurso.
