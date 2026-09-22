@@ -363,6 +363,28 @@ async function showRealtimeNotification(title, body, tag, url = './') {
   }
 }
 
+const realtimeEventCache = new Map();
+const REALTIME_EVENT_CACHE_MS = 15000;
+
+function shouldProcessRealtimeEvent(key) {
+  const now = Date.now();
+  const previous = realtimeEventCache.get(key) || 0;
+  realtimeEventCache.set(key, now);
+  for (const [cacheKey, timestamp] of realtimeEventCache.entries()) {
+    if (now - timestamp > REALTIME_EVENT_CACHE_MS) realtimeEventCache.delete(cacheKey);
+  }
+  return now - previous > REALTIME_EVENT_CACHE_MS;
+}
+
+function productEventChangedMeaningfully(payload) {
+  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  if (eventType !== 'UPDATE') return true;
+  const next = payload?.new || payload?.record || {};
+  const previous = payload?.old || {};
+  const fields = ['name', 'ean', 'corridor_id', 'quantity_found', 'quantity_separated', 'expiration_date', 'status', 'app_metadata'];
+  return fields.some((field) => JSON.stringify(previous?.[field] ?? null) !== JSON.stringify(next?.[field] ?? null));
+}
+
 function notifyTeamEvent(payload) {
   const row = payload?.new || payload?.record || {};
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
@@ -382,6 +404,15 @@ function notifyProductEvent(payload) {
   const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
   const old = payload?.old || {};
   if (!row.id || row.registered_by === teamRealtimeUserId) return;
+  if (!productEventChangedMeaningfully(payload)) {
+    console.info('[VPA] UPDATE ignorado: nenhuma alteração relevante no produto', row.id);
+    return;
+  }
+  const eventKey = [eventType, row.id, row.updated_at || '', row.status || '', row.expiration_date || ''].join('|');
+  if (!shouldProcessRealtimeEvent(eventKey)) {
+    console.info('[VPA] Evento duplicado ignorado:', eventKey);
+    return;
+  }
   const name = row.name || 'Produto';
   const expiry = row.expiration_date ? ` · vence em ${row.expiration_date}` : '';
   let action = eventType === 'INSERT' ? 'foi cadastrado' : eventType === 'DELETE' ? 'foi removido' : 'foi atualizado';
@@ -389,7 +420,7 @@ function notifyProductEvent(payload) {
   const message = `Equipe: ${name} ${action}${expiry}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
-  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType);
+  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType + '-' + (row.updated_at || Date.now()));
 }
 
 function localProductFromCloud(row) {
@@ -440,9 +471,10 @@ async function mergeCloudProducts() {
 }
 
 function mergeCloudProductEvent(payload) {
-  const row = payload?.new || payload?.record;
+  const isDelete = payload?.eventType === 'DELETE' || payload?.event === 'DELETE';
+  const row = isDelete ? (payload?.old || payload?.record) : (payload?.new || payload?.record);
   if (!row?.id) return;
-  if (payload?.eventType === 'DELETE' || payload?.event === 'DELETE') {
+  if (isDelete) {
     data.products = data.products.filter((p) => String(p.id) !== String(row.id));
   } else {
     const cloud = localProductFromCloud(row);
