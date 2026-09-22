@@ -16,6 +16,8 @@
   };
 
   let loadingPromise = null;
+  let initPromise = null;
+  const activeChannels = new Map();
 
   function status(message) {
     return {
@@ -72,19 +74,30 @@
       throw new Error('Configure VPA_SUPABASE_CONFIG com url e anonKey antes de inicializar.');
     }
     if (state.client) return state.client;
+    if (initPromise) return initPromise;
 
-    const lib = await loadLibrary();
-    state.client = lib.createClient(config.url, config.anonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true
+    initPromise = (async function () {
+      const lib = await loadLibrary();
+      if (!state.client) {
+        state.client = lib.createClient(config.url, config.anonKey, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true
+          }
+        });
+        state.initialized = true;
+        state.error = null;
+        console.info('[VPA] Cliente Supabase inicializado. Nenhum dado local foi enviado.');
       }
-    });
-    state.initialized = true;
-    state.error = null;
-    console.info('[VPA] Cliente Supabase inicializado. Nenhum dado local foi enviado.');
-    return state.client;
+      return state.client;
+    })();
+
+    try {
+      return await initPromise;
+    } finally {
+      initPromise = null;
+    }
   }
 
   async function getSession() {
@@ -198,6 +211,8 @@
     if (!payload.name) throw new Error('Produto sem nome.');
     const result = await client.from('products').upsert(payload, { onConflict: 'id' }).select().single();
     if (result.error) throw result.error;
+    if (!result.data) throw new Error('Supabase não retornou o produto após o upsert.');
+    console.info('[VPA] Produto confirmado no Supabase:', result.data.id);
     return result.data;
   }
 
@@ -294,41 +309,43 @@
     return result.data || [];
   }
 
-  async function subscribeBatidas(onChange) {
+  async function subscribeChannel(channelName, tableName, onChange, label) {
     const client = await init();
-    if (typeof onChange !== 'function') throw new Error('Callback de batidas inválido.');
+    if (typeof onChange !== 'function') throw new Error('Callback de ' + label + ' inválido.');
+
+    const existing = activeChannels.get(channelName);
+    if (existing) return existing;
+
     const channel = client
-      .channel('vpa-batidas-equipe')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'batidas' }, function (payload) {
-        try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de batida:', error); }
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: tableName }, function (payload) {
+        try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de ' + label + ':', error); }
       });
-    const status = await channel.subscribe((subscriptionStatus, error) => {
-      if (subscriptionStatus === 'SUBSCRIBED') console.info('[VPA] Realtime batidas conectado.');
-      else console.warn('[VPA] Realtime batidas:', subscriptionStatus, error || '');
+
+    activeChannels.set(channelName, channel);
+    channel.subscribe(function (subscriptionStatus, error) {
+      if (subscriptionStatus === 'SUBSCRIBED') console.info('[VPA] Realtime ' + label + ' conectado.');
+      else console.warn('[VPA] Realtime ' + label + ':', subscriptionStatus, error || '');
     });
-    if (status !== 'SUBSCRIBED') console.warn('[VPA] Canal de batidas não confirmou inscrição:', status);
     return channel;
   }
 
+  async function subscribeBatidas(onChange) {
+    return subscribeChannel('vpa-batidas-equipe', 'batidas', onChange, 'batidas');
+  }
+
   async function subscribeProducts(onChange) {
-    const client = await init();
-    if (typeof onChange !== 'function') throw new Error('Callback de produtos inválido.');
-    const channel = client
-      .channel('vpa-produtos-equipe')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, function (payload) {
-        try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de produto:', error); }
-      });
-    const status = await channel.subscribe((subscriptionStatus, error) => {
-      if (subscriptionStatus === 'SUBSCRIBED') console.info('[VPA] Realtime produtos conectado.');
-      else console.warn('[VPA] Realtime produtos:', subscriptionStatus, error || '');
-    });
-    if (status !== 'SUBSCRIBED') console.warn('[VPA] Canal de produtos não confirmou inscrição:', status);
-    return channel;
+    return subscribeChannel('vpa-produtos-equipe', 'products', onChange, 'produtos');
   }
 
   async function unsubscribe(channel) {
     const client = await init();
-    if (channel) await client.removeChannel(channel);
+    if (channel) {
+      for (const [name, registered] of activeChannels.entries()) {
+        if (registered === channel) activeChannels.delete(name);
+      }
+      await client.removeChannel(channel);
+    }
   }
 
   async function onAuthStateChange(callback) {

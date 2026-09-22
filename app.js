@@ -305,6 +305,7 @@ let selectedProducts = new Set();
 let corridorEditMode = false;
 let teamRealtimeChannel = null;
 let teamRealtimeActive = false;
+let teamRealtimeStarting = null;
 let teamRealtimeUserId = null;
 let teamNotificationCount = 0;
 function pendingProductCard(p) {
@@ -593,8 +594,11 @@ async function bindTeamAuthListener() {
 }
 
 async function initTeamRealtime() {
-  if (teamRealtimeActive || !window.VPASupabase || !window.VPASupabase.isConfigured()) return;
-  try {
+  if (teamRealtimeActive) return teamRealtimeChannel;
+  if (teamRealtimeStarting) return teamRealtimeStarting;
+  if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return null;
+  teamRealtimeStarting = (async () => {
+   try {
     const session = await window.VPASupabase.getSession();
     if (!session?.user?.id) {
       teamRealtimeUserId = null;
@@ -608,15 +612,20 @@ async function initTeamRealtime() {
     teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel };
     teamRealtimeActive = true;
     showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
-  } catch (error) {
+   } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
-  }
+    return null;
+   } finally {
+    teamRealtimeStarting = null;
+   }
+  })();
+  return teamRealtimeStarting;
 }
 
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V12</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas são enviados automaticamente ao Supabase e compartilhados com a equipe quando a estrutura do banco está configurada.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V14</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas são enviados automaticamente ao Supabase e compartilhados com a equipe quando a estrutura do banco está configurada.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1213,10 +1222,15 @@ $('productForm').addEventListener('submit', async (e) => {
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
     const result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
-    if (result?.failed) showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao Supabase. Abra Ajustes para ver a sincronização.', 'warning');
-    else if (result?.synced) showTeamToast('☁️ Produto enviado ao banco compartilhado.', 'success');
+    if (!result || result.failed || result.synced !== 1) {
+      const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
+      showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
+    } else {
+      console.info('[VPA] Produto confirmado no Supabase:', product.id);
+      showTeamToast('☁️ Produto confirmado no banco compartilhado.', 'success');
+    }
   } catch (error) {
-    console.warn('[VPA] Sincronização automática do produto falhou:', error.message || error);
+    console.error('[VPA] Sincronização automática do produto falhou:', error);
     showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
   $('productDialog').close();

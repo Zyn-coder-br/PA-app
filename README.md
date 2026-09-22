@@ -25,3 +25,10 @@ V3 visual: painel com hero verde e identidade visual profissional, preservando a
 - Aumentado o espaço entre cards e blocos do painel.
 - Aplicados espaçamentos verticais e horizontais com seletores específicos.
 - Mantida a lógica JavaScript original da V8.2.6.
+
+## V15 — Correção de inicialização e canais Realtime
+
+- Evita a criação concorrente de múltiplos clientes Supabase.
+- Evita assinar o mesmo canal Realtime mais de uma vez.
+- Remove a validação incorreta que tratava o objeto de canal retornado por `subscribe()` como se fosse um status textual.
+- Mantém os canais de `batidas` e `products` compartilhados.
