@@ -363,28 +363,6 @@ async function showRealtimeNotification(title, body, tag, url = './') {
   }
 }
 
-const realtimeEventCache = new Map();
-const REALTIME_EVENT_CACHE_MS = 15000;
-
-function shouldProcessRealtimeEvent(key) {
-  const now = Date.now();
-  const previous = realtimeEventCache.get(key) || 0;
-  realtimeEventCache.set(key, now);
-  for (const [cacheKey, timestamp] of realtimeEventCache.entries()) {
-    if (now - timestamp > REALTIME_EVENT_CACHE_MS) realtimeEventCache.delete(cacheKey);
-  }
-  return now - previous > REALTIME_EVENT_CACHE_MS;
-}
-
-function productEventChangedMeaningfully(payload) {
-  const eventType = payload?.eventType || payload?.event || 'UPDATE';
-  if (eventType !== 'UPDATE') return true;
-  const next = payload?.new || payload?.record || {};
-  const previous = payload?.old || {};
-  const fields = ['name', 'ean', 'corridor_id', 'quantity_found', 'quantity_separated', 'expiration_date', 'status', 'app_metadata'];
-  return fields.some((field) => JSON.stringify(previous?.[field] ?? null) !== JSON.stringify(next?.[field] ?? null));
-}
-
 function notifyTeamEvent(payload) {
   const row = payload?.new || payload?.record || {};
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
@@ -398,29 +376,27 @@ function notifyTeamEvent(payload) {
   showRealtimeNotification('Vencimento PA · Equipe', message, 'vpa-team-' + row.id);
 }
 
+const recentProductEvents = new Map();
 function notifyProductEvent(payload) {
-  mergeCloudProductEvent(payload);
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
   const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
-  const old = payload?.old || {};
-  if (!row.id || row.registered_by === teamRealtimeUserId) return;
-  if (!productEventChangedMeaningfully(payload)) {
-    console.info('[VPA] UPDATE ignorado: nenhuma alteração relevante no produto', row.id);
-    return;
-  }
-  const eventKey = [eventType, row.id, row.updated_at || '', row.status || '', row.expiration_date || ''].join('|');
-  if (!shouldProcessRealtimeEvent(eventKey)) {
-    console.info('[VPA] Evento duplicado ignorado:', eventKey);
-    return;
-  }
+  if (!row.id) return;
+  const eventFingerprint = [eventType, row.id, row.updated_at || row.created_at || '', row.status || '', row.name || ''].join('|');
+  const now = Date.now();
+  for (const [key, time] of recentProductEvents.entries()) if (now - time > 15000) recentProductEvents.delete(key);
+  if (recentProductEvents.has(eventFingerprint)) return;
+  recentProductEvents.set(eventFingerprint, now);
+  mergeCloudProductEvent(payload);
+  if (row.registered_by === teamRealtimeUserId) return;
   const name = row.name || 'Produto';
   const expiry = row.expiration_date ? ` · vence em ${row.expiration_date}` : '';
   let action = eventType === 'INSERT' ? 'foi cadastrado' : eventType === 'DELETE' ? 'foi removido' : 'foi atualizado';
-  if (eventType === 'UPDATE' && old.status !== row.status) action = `mudou de status para ${row.status || 'atualizado'}`;
+  const old = payload?.old || {};
+  if (eventType === 'UPDATE' && old.status !== row.status && old.status !== undefined) action = `mudou de status para ${row.status || 'atualizado'}`;
   const message = `Equipe: ${name} ${action}${expiry}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
-  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType + '-' + (row.updated_at || Date.now()));
+  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType + '-' + (row.updated_at || row.created_at || ''));
 }
 
 function localProductFromCloud(row) {
@@ -456,13 +432,14 @@ async function mergeCloudProducts() {
   if (!window.VPASupabase?.listProducts) return;
   try {
     const rows = await window.VPASupabase.listProducts();
-    const byId = new Map(data.products.map((p) => [String(p.id), p]));
-    rows.forEach((row) => {
+    const cloudIds = new Set(rows.map((row) => String(row.id)));
+    const pendingLocal = data.products.filter((product) => product.syncPending === true && !cloudIds.has(String(product.id)));
+    const merged = rows.map((row) => {
+      const local = data.products.find((product) => String(product.id) === String(row.id));
       const cloud = localProductFromCloud(row);
-      const local = byId.get(String(row.id));
-      byId.set(String(row.id), { ...local, ...cloud, photo: local?.photo || '' });
+      return { ...local, ...cloud, syncPending: false, photo: local?.photo || '' };
     });
-    data.products = Array.from(byId.values());
+    data.products = [...merged, ...pendingLocal];
     await save();
     render();
   } catch (error) {
@@ -471,16 +448,16 @@ async function mergeCloudProducts() {
 }
 
 function mergeCloudProductEvent(payload) {
-  const isDelete = payload?.eventType === 'DELETE' || payload?.event === 'DELETE';
-  const row = isDelete ? (payload?.old || payload?.record) : (payload?.new || payload?.record);
+  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
   if (!row?.id) return;
-  if (isDelete) {
-    data.products = data.products.filter((p) => String(p.id) !== String(row.id));
+  if (eventType === 'DELETE') {
+    data.products = data.products.filter((product) => String(product.id) !== String(row.id));
   } else {
     const cloud = localProductFromCloud(row);
-    const index = data.products.findIndex((p) => String(p.id) === String(row.id));
-    if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, photo: data.products[index].photo || '' };
-    else data.products.push(cloud);
+    const index = data.products.findIndex((product) => String(product.id) === String(row.id));
+    if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, syncPending: false, photo: data.products[index].photo || '' };
+    else data.products.push({ ...cloud, syncPending: false });
   }
   save().then(() => render()).catch((error) => console.warn('[VPA] Falha ao salvar produto compartilhado:', error));
 }
@@ -783,11 +760,11 @@ async function startBatch(event) {
     render();
     return;
   }
-  const batch = { id: uid(), corridorId: corridor.id, corridorName: corridor.name, date: today(), startedAt: new Date().toISOString(), status: 'aberta', finishedAt: null };
+  const batch = { id: uid(), corridorId: corridor.id, corridorName: corridor.name, date: today(), startedAt: new Date().toISOString(), status: 'aberta', finishedAt: null, syncPending: true };
   data.batches.push(batch);
   data.activeBatchId = batch.id;
   await save();
-  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   $('batchDialog').close();
   view = 'batches';
   render();
@@ -816,7 +793,7 @@ async function cancelOpenBatch() {
   batch.finishedAt = new Date().toISOString();
   data.activeBatchId = null;
   await save();
-  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
 async function finishBatch() {
@@ -828,7 +805,7 @@ async function finishBatch() {
   batch.finishedAt = new Date().toISOString();
   const c = data.corridors.find((x) => x.id === batch.corridorId); if (c) c.lastCheck = today();
   data.activeBatchId = null; await save();
-  window.VPASupabase?.syncBatches?.([batch], data.corridors).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
 async function lookupEAN(ean) {
@@ -1000,14 +977,14 @@ async function runFefoOcr() {
 async function importFefoItems() {
   if (!fefoOcrItems.length) { alert('Leia uma lista e confira pelo menos um item antes de confirmar.'); return; }
   const corridorId = data.corridors[0]?.id || '';
-  const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false }));
+  const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
   imported.forEach((product) => data.products.push(product));
   await save();
   const corridor = data.corridors.find((c) => c.id === corridorId);
   try {
     const result = await window.VPASupabase?.syncProducts?.(imported.map((p) => ({ ...p, corridorNumber: corridor?.number })));
     if (result && result.failed) showTeamToast(`⚠️ FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
-    else if (result?.synced) showTeamToast(`☁️ ${result.synced} item(ns) FEFO enviado(s) ao banco compartilhado.`, 'success');
+    else if (result?.synced) { imported.forEach((product) => { product.syncPending = false; }); await save(); showTeamToast(`☁️ ${result.synced} item(ns) FEFO enviado(s) ao banco compartilhado.`, 'success'); }
   } catch (error) {
     console.warn('[VPA] Sincronização automática do FEFO falhou:', error.message || error);
     showTeamToast('⚠️ FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
@@ -1088,52 +1065,33 @@ async function autoSyncAllOnLogin(reason = 'login') {
   if (!window.VPASupabase?.isConfigured?.()) return { skipped: true, reason: 'supabase-not-configured' };
   if (autoSyncInProgress) return autoSyncInProgress;
   autoSyncInProgress = (async () => {
-    const result = { products: null, batches: null, cloudLoaded: false, skippedExisting: true };
+    const result = { products: null, batches: null, cloudLoaded: false };
     try {
       console.info('[VPA] Sincronização automática iniciada:', reason);
-
-      // Primeiro lemos o estado da nuvem. Não devemos reenviar todos os
-      // registros locais ao entrar/recarregar, pois isso pode gerar UPDATEs
-      // artificiais no Realtime e provocar spam nos outros aparelhos.
-      const cloudProducts = window.VPASupabase.listProducts
-        ? await window.VPASupabase.listProducts()
-        : [];
-      const cloudProductIds = new Set((cloudProducts || []).map((row) => String(row.id)));
-      const pendingProducts = data.products
-        .filter((product) => !cloudProductIds.has(String(product.id)))
-        .map((product) => {
-          const corridor = data.corridors.find((item) => item.id === product.corridorId);
-          return { ...product, corridorNumber: corridor?.number };
-        });
-
-      // Somente produtos que ainda não existem na nuvem são enviados no login.
-      if (pendingProducts.length && window.VPASupabase.syncProducts) {
-        result.products = await window.VPASupabase.syncProducts(pendingProducts);
+      const pendingProducts = data.products.filter((product) => product.syncPending === true);
+      const productsWithNumbers = pendingProducts.map((product) => {
+        const corridor = data.corridors.find((item) => item.id === product.corridorId);
+        return { ...product, corridorNumber: corridor?.number };
+      });
+      if (productsWithNumbers.length && window.VPASupabase.syncProducts) {
+        result.products = await window.VPASupabase.syncProducts(productsWithNumbers);
+        const successfulIds = new Set(productsWithNumbers.filter((product) => !result.products.errors.some((error) => String(error.id) === String(product.id))).map((product) => String(product.id)));
+        data.products.forEach((product) => { if (successfulIds.has(String(product.id))) product.syncPending = false; });
+        await save();
         result.products.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática do produto:', item));
-      } else {
-        result.products = { total: 0, synced: 0, failed: 0, skipped: data.products.length };
-        console.info('[VPA] Nenhum produto existente foi reenviado no login.');
       }
-
-      // A mesma proteção vale para batidas: somente IDs ainda ausentes na
-      // nuvem são enviados automaticamente.
-      const cloudBatches = window.VPASupabase.listBatidas
-        ? await window.VPASupabase.listBatidas()
-        : [];
-      const cloudBatchIds = new Set((cloudBatches || []).map((row) => String(row.id)));
-      const pendingBatches = data.batches.filter((batch) => !cloudBatchIds.has(String(batch.id)));
+      const pendingBatches = data.batches.filter((batch) => batch.syncPending === true);
       if (pendingBatches.length && window.VPASupabase.syncBatches) {
         result.batches = await window.VPASupabase.syncBatches(pendingBatches, data.corridors);
+        const successfulBatchIds = new Set(pendingBatches.filter((batch) => !result.batches.errors.some((error) => String(error.id) === String(batch.id))).map((batch) => String(batch.id)));
+        data.batches.forEach((batch) => { if (successfulBatchIds.has(String(batch.id))) batch.syncPending = false; });
+        await save();
         result.batches.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática da batida:', item));
-      } else {
-        result.batches = { total: 0, synced: 0, failed: 0, skipped: data.batches.length };
-        console.info('[VPA] Nenhuma batida existente foi reenviada no login.');
       }
-
       await mergeCloudProducts();
       await mergeCloudBatidas();
       result.cloudLoaded = true;
-      console.info('[VPA] Sincronização automática concluída sem reenvio de registros existentes:', result);
+      console.info('[VPA] Sincronização automática concluída:', result);
       return result;
     } catch (error) {
       console.warn('[VPA] Sincronização automática após login falhou:', error.message || error);
@@ -1323,7 +1281,8 @@ $('productForm').addEventListener('submit', async (e) => {
     tag: existing?.tag || '',
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
-    promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor'
+    promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
+    syncPending: true
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
@@ -1334,6 +1293,8 @@ $('productForm').addEventListener('submit', async (e) => {
       const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
       showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
     } else {
+      product.syncPending = false;
+      await save();
       console.info('[VPA] Produto confirmado no Supabase:', product.id);
       showTeamToast('☁️ Produto confirmado no banco compartilhado.', 'success');
     }

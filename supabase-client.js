@@ -209,36 +209,6 @@
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
-    // Evita gerar eventos UPDATE desnecessários quando o aplicativo apenas
-    // sincroniza novamente os dados locais durante o login/recarregamento.
-    const existingResult = await client
-      .from('products')
-      .select('id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, app_metadata')
-      .eq('id', payload.id)
-      .maybeSingle();
-    if (existingResult.error) throw existingResult.error;
-
-    const existing = existingResult.data;
-    const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-    const unchanged = existing &&
-      existing.name === payload.name &&
-      (existing.ean || null) === (payload.ean || null) &&
-      String(existing.corridor_id) === String(payload.corridor_id) &&
-      Number(existing.quantity_found || 0) === Number(payload.quantity_found || 0) &&
-      Number(existing.quantity_separated || 0) === Number(payload.quantity_separated || 0) &&
-      (existing.expiration_date || null) === (payload.expiration_date || null) &&
-      existing.status === payload.status &&
-      sameValue(existing.app_metadata, payload.app_metadata);
-
-    if (unchanged) {
-      console.info('[VPA] Produto já estava atualizado; nenhum UPDATE enviado:', payload.id);
-      return existing;
-    }
-
-    // Preserva o autor original quando outro usuário apenas sincroniza ou
-    // atualiza o registro compartilhado.
-    if (existing?.registered_by) payload.registered_by = existing.registered_by;
-
     const result = await client.from('products').upsert(payload, { onConflict: 'id' }).select().single();
     if (result.error) throw result.error;
     if (!result.data) throw new Error('Supabase não retornou o produto após o upsert.');
