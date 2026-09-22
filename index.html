@@ -12,14 +12,12 @@
 </head>
 <body>
 <div id="app">
-<header class="app-header">
-  <div class="brand-area"><div class="brand-mark">🛒</div><div><div class="brand-name">VENCIMENTO <span>PA</span></div><div class="brand-subtitle">Prevenção hoje, resultados sempre!</div></div></div>
-  <div class="user-area"><div><strong id="vpaHeaderUserName">Olá, Ramon! 👋</strong><small id="vpaHeaderUserRole">Pleno 2 | Administrador</small></div><div class="avatar" id="vpaHeaderAvatar">R</div><button class="header-icon" id="vpaLogoutButton" aria-label="Sair da conta" title="Sair">↪</button><button class="header-icon" id="settingsShortcut" aria-label="Abrir ajustes">⚙</button></div>
+<header class="app-header" role="banner">
+  <div class="brand-area"><div class="brand-mark" aria-hidden="true"><img src="icons/logo-vencimento-pa.png" alt="Logo Vencimento PA"></div><div><div class="brand-name">VENCIMENTO <span>PA</span></div><div class="brand-subtitle">Prevenção hoje, resultados sempre!</div></div></div>
+  <div class="user-area"><div class="user-meta"><strong id="vpaHeaderUserName">Olá, Ramon! 👋</strong><small id="vpaHeaderUserRole">Pleno 2 | Administrador</small></div><button class="avatar avatar-button" id="vpaHeaderAvatar" type="button" aria-label="Alterar foto do perfil" title="Alterar foto do perfil">R</button><button class="header-menu-button" id="floatingNavTrigger" aria-label="Abrir menu de navegação" aria-expanded="false" title="Menu">☰</button></div>
 </header>
-<main id="view"></main>
-<button class="floating-nav-trigger" id="floatingNavTrigger" aria-label="Abrir navegação">＋</button>
-<nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal"><button data-view="dashboard"><span>⌂</span><small>Início</small></button><button data-view="products"><span>▣</span><small>Produtos</small></button><button data-view="batches"><span>⌗</span><small>Batidas</small></button><button data-view="expiries"><span>▦</span><small>Vencimentos</small></button><button data-view="pending"><span>▤</span><small>Pendências</small></button><button data-view="reports"><span>▥</span><small>Acompanhamento</small></button><button data-view="settings"><span>⚙</span><small>Ajustes</small></button></nav>
-<nav class="floating-nav-panel" id="floatingNavPanel" aria-label="Subcategorias da interface atual"></nav>
+<main id="view"></main><input id="profilePhotoInput" type="file" accept="image/*" hidden>
+<nav class="floating-nav-panel" id="floatingNavPanel" aria-label="Menu de navegação"></nav>
 </div>
 <dialog id="productDialog"><form method="dialog" id="productForm"><div class="dialog-head"><div><div class="eyebrow">CADASTRO</div><h2>Novo produto</h2></div><button type="button" id="closeProductDialog" class="close-btn" aria-label="Fechar cadastro">×</button></div><input type="hidden" id="productId"><fieldset class="product-type-field"><legend>Tipo de produto <span title="Escolha em qual lista o produto será salvo">ⓘ</span></legend><div class="product-type-options"><label class="product-type-card"><input type="radio" name="productType" value="general" checked><span class="product-type-icon">🛒</span><strong>Produtos geral</strong><small>Aparece na lista de produtos da operação</small></label><label class="product-type-card"><input type="radio" name="productType" value="fefo"><span class="product-type-icon">📦</span><strong>Produtos FEFO</strong><small>Aparece apenas na lista FEFO</small></label><label class="product-type-card"><input type="radio" name="productType" value="promotor"><span class="product-type-icon">📣</span><strong>Produtos promotores</strong><small>Aparece apenas na lista de promotores</small></label></div></fieldset><label>Nome do produto<input id="name" required maxlength="100" placeholder="Ex.: Leite Ninho 750g"></label><label>EAN / código de barras<div class="ean-line"><input id="ean" inputmode="numeric" maxlength="20" placeholder="Digite ou leia o EAN"><button type="button" class="secondary ean-btn" id="scanEan">📷 Ler</button><button type="button" class="secondary ean-btn" id="lookupEan">🔎 Buscar</button></div><small id="lookupMessage" class="field-help"></small><button type="button" class="secondary wide" id="openFefoScanner">📄 Escanear lista FEFO (A4)</button></label><label>Corredor<select id="corridor" required></select><small id="batchContext" class="field-help"></small></label><div class="two"><label>Validade<input id="expiry" type="date" required></label><label>Quantidade<input id="quantity" type="number" min="1" value="1" required></label></div><label>Status<select id="status"><option value="corredor">Ainda no corredor</option><option value="vencimento">Área de vencimento</option></select></label><label>Foto do produto<input id="photoInput" type="file" accept="image/*" capture="environment"><input id="photoData" type="hidden"><div id="photoPreview" class="photo-preview"><span>Sem foto adicionada</span></div></label><small class="field-help">A foto pode vir da consulta online ou ser adicionada pela câmera/galeria.</small><button class="primary wide" id="saveProduct" value="default">Salvar produto</button></form></dialog>
 <dialog id="fefoScannerDialog" class="fefo-scanner-dialog"><div class="dialog-head"><div><div class="eyebrow">LEITURA FEFO</div><h2>Escanear lista A4</h2><p class="dialog-help">Fotografe a lista, confira os dados reconhecidos e importe os itens como FEFO.</p></div><button type="button" id="closeFefoScanner" class="close-btn" aria-label="Fechar scanner">×</button></div><label>Foto da lista A4<input id="fefoImageInput" type="file" accept="image/*" capture="environment"></label><div class="dialog-actions"><button type="button" class="secondary" id="runFefoOcr">🔎 Ler lista</button><span id="fefoOcrStatus" class="field-help"></span></div><div id="fefoOcrResults" class="fefo-ocr-results"><div class="empty">Nenhuma lista processada.</div></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelFefoImport">Cancelar</button><button type="button" class="primary" id="importFefoItems" disabled>Confirmar e adicionar itens FEFO</button></div></div></dialog><dialog id="batchDialog"><form id="batchForm"><div class="dialog-head"><div><div class="eyebrow">NOVA CONFERÊNCIA</div><h2>Escolher corredor</h2><p class="dialog-help">Selecione o corredor que você vai conferir. A batida só será registrada quando você finalizar a conferência.</p></div><button type="button" id="closeBatchDialog" class="close-btn" aria-label="Fechar">×</button></div><label for="batchCorridor">Corredor da batida<select id="batchCorridor" required></select></label><div class="batch-preview"><span>●</span><div><strong id="batchPreviewName">Corredor selecionado</strong><small>O histórico só será atualizado ao finalizar a batida.</small></div></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelBatch">Cancelar</button><button type="submit" class="primary" id="startBatch">Iniciar conferência</button></div></form></dialog>
@@ -29,7 +27,7 @@
     <section class="vpa-auth-brand" aria-label="Identidade do Vencimento PA">
       <div class="vpa-auth-version">Versão 8.2.6</div>
       <div class="vpa-auth-logo">
-        <div class="vpa-auth-cart">🛒<span>◷</span></div>
+        <div class="vpa-auth-cart"><img src="icons/logo-vencimento-pa.png" alt="Logo Vencimento PA"></div>
         <div class="vpa-auth-brand-name">VENCIMENTO <strong>PA</strong></div>
         <div class="vpa-auth-tagline">PREVENÇÃO HOJE, RESULTADOS SEMPRE</div>
       </div>
@@ -133,7 +131,7 @@
     var first = display.trim().charAt(0).toUpperCase() || 'U';
     var nameEl = byId('vpaHeaderUserName'); var roleEl = byId('vpaHeaderUserRole'); var avatarEl = byId('vpaHeaderAvatar');
     if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
-    if (avatarEl) avatarEl.textContent = first;
+    if (avatarEl) { var savedAvatar = ''; try { savedAvatar = localStorage.getItem('vpa-profile-avatar') || ''; } catch (e) {} if (savedAvatar) { avatarEl.innerHTML = '<img src="' + savedAvatar.replace(/"/g, '&quot;') + '" alt="Foto do perfil">'; avatarEl.classList.add('has-photo'); } else { avatarEl.textContent = first; avatarEl.classList.remove('has-photo'); } }
     if (roleEl) { var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
     window.VPA_PROFILE = profile || null;
   }
@@ -176,8 +174,14 @@
       catch (error) { message(friendlyError(error)); }
       finally { if (button) button.disabled = false; }
     });
+    window.VPA_LOGOUT = async function (button) {
+      if (button) button.disabled = true;
+      try { if (window.VPASupabase && window.VPASupabase.signOut) await window.VPASupabase.signOut(); currentProfile = null; window.VPA_PROFILE = null; applyProfileProtection(null); message('Sessão encerrada. Entre novamente para continuar.'); showLogin(); }
+      catch (error) { console.warn('[VPA] Falha ao sair:', error); message('Não foi possível encerrar a sessão.'); }
+      finally { if (button) button.disabled = false; }
+    };
     var logout = byId('vpaLogoutButton');
-    if (logout) logout.addEventListener('click', async function () { logout.disabled = true; try { if (window.VPASupabase && window.VPASupabase.signOut) await window.VPASupabase.signOut(); currentProfile = null; window.VPA_PROFILE = null; applyProfileProtection(null); message('Sessão encerrada. Entre novamente para continuar.'); showLogin(); } catch (error) { console.warn('[VPA] Falha ao sair:', error); message('Não foi possível encerrar a sessão.'); } finally { logout.disabled = false; } });
+    if (logout) logout.addEventListener('click', function () { window.VPA_LOGOUT(logout); });
     var toggle = byId('vpaTogglePassword');
     if (toggle) toggle.addEventListener('click', function () { var input = byId('vpaAuthPassword'); if (!input) return; var showing = input.type === 'text'; input.type = showing ? 'password' : 'text'; toggle.textContent = showing ? '◉' : '◌'; toggle.setAttribute('aria-label', showing ? 'Mostrar senha' : 'Ocultar senha'); });
     byId('vpaOpenSignup')?.addEventListener('click', function () { setMessage('vpaSignupMessage', ''); closeDialog('vpaAuthDialog'); showDialog('vpaSignupDialog'); });

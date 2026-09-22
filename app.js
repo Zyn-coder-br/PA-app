@@ -323,6 +323,42 @@ function teamNotificationPermissionLabel() {
   return '🟡 Permissão de notificações ainda não definida neste navegador.';
 }
 
+async function testAndroidNotification() {
+  if (!('Notification' in window)) {
+    showTeamToast('Este navegador não oferece notificações.', 'warning');
+    return;
+  }
+  if (Notification.permission !== 'granted') {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showTeamToast('Autorize as notificações antes de executar o teste.', 'warning');
+      render();
+      return;
+    }
+  }
+  if (!('serviceWorker' in navigator)) {
+    showTeamToast('Este navegador não oferece Service Worker.', 'warning');
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification('Vencimento PA · Teste Android', {
+      body: 'Teste concluído: esta é uma notificação local do aplicativo.',
+      icon: './icons/icon-192.png',
+      badge: './icons/icon-192.png',
+      tag: 'vpa-android-test-' + Date.now(),
+      renotify: true,
+      vibrate: [180, 80, 220],
+      timestamp: Date.now(),
+      data: { url: './' }
+    });
+    showTeamToast('✅ Notificação de teste enviada para a barra de notificações.', 'success');
+  } catch (error) {
+    console.warn('[VPA] Não foi possível mostrar a notificação de teste:', error);
+    showTeamToast('Não foi possível mostrar a notificação. Teste pelo GitHub Pages com o PWA instalado.', 'warning');
+  }
+}
+
 async function requestTeamNotifications() {
   if (!('Notification' in window)) { showTeamToast('Este navegador não oferece notificações.', 'warning'); return; }
   if (Notification.permission === 'denied') {
@@ -410,18 +446,29 @@ async function initTeamRealtime() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Equipe online</div><p class="panel-sub">Carrega batidas compartilhadas e recebe atualizações dos outros usuários enquanto o aplicativo estiver conectado.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Ativar notificações</button><button class="secondary" id="reloadTeamBatches">↻ Atualizar equipe</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Conectado ao canal de batidas" : "🟡 Aguardando conexão"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações</div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Use esta opção apenas para autorizar os avisos do navegador neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
-  const items = {
-    dashboard: [],
+  const main = [
+    ['dashboard','⌂','Início'],
+    ['products','▣','Produtos'],
+    ['batches','⌗','Batidas'],
+    ['expiries','▦','Vencimentos'],
+    ['pending','▤','Pendências'],
+    ['reports','▥','Acompanhamento'],
+    ['settings','⚙','Ajustes']
+  ];
+  const submenus = {
     products: [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']],
     batches: [['current','Batida atual'],['history','Histórico']],
     expiries: [['today','Vence hoje'],['tomorrow','Vence amanhã'],['10','Vence em 2–10 dias'],['30','Vence em 11–30 dias'],['31','Vence em 31+ dias']],
-    pending: [['pique','🔴 PIQUE'],['fefo','🔵 PIQUE FEFO']],
-    settings: []
+    pending: [['pique','🔴 PIQUE'],['fefo','🔵 PIQUE FEFO']]
   };
-  return (items[view] || []).map(([key,label]) => `<button data-submenu="${key}">${label}</button>`).join('') || '<span class="floating-empty">Sem subcategorias nesta interface</span>';
+  const mainMarkup = main.map(([key,icon,label]) => `<button class="nav-main-item${view === key ? ' active' : ''}" data-view="${key}"><span>${icon}</span><strong>${label}</strong></button>`).join('');
+  const submenuMarkup = (submenus[view] || []).length
+    ? `<div class="floating-nav-divider">Opções desta tela</div>${submenus[view].map(([key,label]) => `<button class="nav-sub-item" data-submenu="${key}">${label}</button>`).join('')}`
+    : '';
+  return `<div class="floating-nav-heading">Navegação do sistema</div>${mainMarkup}${submenuMarkup}<div class="floating-nav-footer"><button class="nav-profile-photo" id="navProfilePhotoButton"><span>◉</span><strong>Alterar foto do perfil</strong></button><button class="nav-logout-item" id="navLogoutButton"><span>↪</span><strong>Sair da conta</strong></button></div>`;
 }
 function reports() {
   const monthKey = today().slice(0, 7);
@@ -461,9 +508,8 @@ function render() {
   // O botão de cadastro é recriado a cada renderização; vincular diretamente aqui evita que ele fique sem evento.
   const newProductButton = $('newProduct');
   if (newProductButton) newProductButton.onclick = (event) => { event.preventDefault(); openProduct(null, true); };
-  const showFloating = !['dashboard','settings'].includes(view);
-  $('floatingNavTrigger').style.display = showFloating ? 'block' : 'none';
-  document.querySelectorAll('.bottom-nav [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('floatingNavTrigger').style.display = 'inline-grid';
+  $('floatingNavTrigger').setAttribute('aria-expanded', $('floatingNavPanel')?.classList.contains('open') ? 'true' : 'false');
   document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => { view = b.dataset.view; $('floatingNavPanel')?.classList.remove('open'); render(); });
   document.querySelectorAll('[data-submenu]').forEach((b) => b.onclick = () => { const key = b.dataset.submenu; if (view === 'products') { productFilter = key; localStorage.setItem('vpa-product-filter', productFilter); } if (view === 'expiries') { expiryFilter = key; localStorage.setItem('vpa-expiry-filter', expiryFilter); } if (view === 'pending') { pendingFilter = key; localStorage.setItem('vpa-pending-filter', pendingFilter); selectedProducts.clear(); } if (view === 'batches') { batchTab = key; localStorage.setItem('vpa-batch-tab', batchTab); } $('floatingNavPanel')?.classList.remove('open'); render(); });
   bind();
@@ -826,6 +872,45 @@ async function syncLocalBatchesToCloud() {
   }
 }
 
+function applyProfileAvatar(dataUrl) {
+  const avatar = $('vpaHeaderAvatar');
+  if (!avatar) return;
+  if (dataUrl) {
+    avatar.innerHTML = `<img src="${esc(dataUrl)}" alt="Foto do perfil">`;
+    avatar.classList.add('has-photo');
+  } else {
+    const profile = window.VPA_PROFILE || {};
+    const display = profile.full_name || profile.email || 'Usuário';
+    avatar.textContent = display.trim().charAt(0).toUpperCase() || 'U';
+    avatar.classList.remove('has-photo');
+  }
+}
+function openProfilePhotoPicker() {
+  $('profilePhotoInput')?.click();
+}
+function bindProfilePhoto() {
+  const input = $('profilePhotoInput');
+  const avatar = $('vpaHeaderAvatar');
+  if (avatar) avatar.onclick = openProfilePhotoPicker;
+  if (input && !input.dataset.bound) {
+    input.dataset.bound = '1';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) return;
+      if (file.size > 4 * 1024 * 1024) { showTeamToast('A foto deve ter no máximo 4 MB.', 'warning'); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const value = String(reader.result || '');
+        try { localStorage.setItem('vpa-profile-avatar', value); } catch (error) { console.warn('[VPA] Não foi possível salvar a foto:', error); }
+        applyProfileAvatar(value);
+        showTeamToast('✅ Foto do perfil atualizada neste aparelho.', 'success');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  applyProfileAvatar(localStorage.getItem('vpa-profile-avatar') || '');
+}
 function bind() {
   document.querySelectorAll('[data-open-pique]').forEach((b) => b.addEventListener('click', () => openPiqueDialog(b.dataset.openPique)));
   $('closePiqueDialog')?.addEventListener('click', () => $('piqueDialog').close());
@@ -837,7 +922,18 @@ function bind() {
   $('cancelFefoImport')?.addEventListener('click', () => $('fefoScannerDialog').close());
   $('runFefoOcr')?.addEventListener('click', runFefoOcr);
   $('importFefoItems')?.addEventListener('click', importFefoItems);
-  $('floatingNavTrigger')?.addEventListener('click', () => $('floatingNavPanel')?.classList.toggle('open'));
+  // Usa atribuição direta para evitar listeners duplicados após cada render().
+  // O problema anterior fazia o menu abrir e fechar imediatamente depois de trocar de painel.
+  const navTrigger = $('floatingNavTrigger');
+  if (navTrigger) navTrigger.onclick = () => {
+    const panel = $('floatingNavPanel');
+    const willOpen = !panel?.classList.contains('open');
+    panel?.classList.toggle('open', willOpen);
+    navTrigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  };
+  bindProfilePhoto();
+  $('navProfilePhotoButton')?.addEventListener('click', () => { openProfilePhotoPicker(); });
+  $('navLogoutButton')?.addEventListener('click', () => { if (window.VPA_LOGOUT) window.VPA_LOGOUT($('navLogoutButton')); });
   $('closeProductDialog')?.addEventListener('click', () => $('productDialog').close());
   $('scanEan')?.addEventListener('click', startScanner);
   $('lookupEan')?.addEventListener('click', () => lookupEAN($('ean').value));
@@ -848,6 +944,7 @@ function bind() {
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
+  $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
   $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
@@ -883,7 +980,6 @@ function bind() {
   $('reportsShortcut')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBtn')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBack')?.addEventListener('click', () => { view = 'dashboard'; render(); });
-  $('settingsShortcut')?.addEventListener('click', () => { view = 'settings'; render(); });
   $('addBatchProduct')?.addEventListener('click', () => openProduct(null, false));
   $('finishBatch')?.addEventListener('click', finishBatch);
   $('cancelOpenBatch')?.addEventListener('click', cancelOpenBatch);
@@ -938,6 +1034,23 @@ $('productForm').addEventListener('submit', async (e) => {
   render();
 });
 $('restoreInput').onchange = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async () => { try { data = JSON.parse(reader.result); seed(); data.corridors.forEach((c) => { if (!c.name) c.name = `Corredor ${c.number}`; }); await save(); render(); alert('Backup restaurado com sucesso.'); } catch { alert('Backup inválido.'); } }; reader.readAsText(file); };
+function installHeaderBehavior() {
+  const header = document.querySelector('.app-header');
+  if (!header || header.dataset.scrollReady === 'true') return;
+  header.dataset.scrollReady = 'true';
+  let lastY = window.scrollY || 0;
+  const updateHeader = () => {
+    const y = window.scrollY || 0;
+    header.classList.toggle('header-hidden', y > 8);
+    if (y > 8) {
+      $('floatingNavPanel')?.classList.remove('open');
+      $('floatingNavTrigger')?.setAttribute('aria-expanded', 'false');
+    }
+    lastY = y;
+  };
+  window.addEventListener('scroll', updateHeader, { passive: true });
+  updateHeader();
+}
 (async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
   setTimeout(() => {
     bindTeamAuthListener().catch(() => {});

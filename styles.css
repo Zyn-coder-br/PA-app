@@ -420,3 +420,242 @@ body{
 .vpa-credits{padding:18px 16px 26px;text-align:center;color:#71858b;font-size:12px;background:#f5f8f7;border-top:1px solid #e0ebe5}
 .vpa-credits strong{color:#277653}
 @media(max-width:520px){.vpa-small-auth-dialog form{padding:22px 18px}}
+
+/* Identidade visual Vencimento PA — logo verde profissional */
+.brand-mark{width:52px;height:52px;flex:0 0 52px;overflow:hidden;border-radius:15px;box-shadow:0 4px 14px rgba(13,118,84,.18)}
+.brand-mark img{display:block;width:100%;height:100%;object-fit:cover}
+.vpa-auth-cart{font-size:0;letter-spacing:0;margin-bottom:18px}
+.vpa-auth-cart img{display:block;width:112px;height:112px;object-fit:cover;border-radius:28px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+
+
+/* VPA V2 - CABEÇALHO PROFISSIONAL + NAVEGAÇÃO MOBILE CORRIGIDA */
+.app-header{
+  position:sticky;
+  top:0;
+  z-index:20;
+  max-width:none;
+  margin:0 auto 8px;
+  padding:14px max(20px,calc((100vw - 1100px)/2 + 20px));
+  min-height:72px;
+  box-sizing:border-box;
+  background:rgba(255,255,255,.94);
+  border-bottom:1px solid #dfe9e4;
+  box-shadow:0 6px 22px rgba(20,68,49,.07);
+  backdrop-filter:blur(16px);
+}
+.app-header::before{
+  content:"";
+  position:absolute;
+  left:0;right:0;top:0;height:3px;
+  background:linear-gradient(90deg,#12633c,#2d9a69,#63d59a);
+}
+.brand-area{gap:12px;min-width:0}
+.brand-mark{
+  width:48px;height:48px;flex:0 0 48px;
+  border-radius:14px;
+  overflow:hidden;
+  background:#0f6d45;
+  box-shadow:0 5px 16px rgba(19,112,72,.18);
+  border:1px solid rgba(19,112,72,.12);
+}
+.brand-mark img{width:100%;height:100%;object-fit:cover;display:block}
+.brand-name{font-size:clamp(19px,3vw,28px);letter-spacing:-.8px;line-height:1}
+.brand-subtitle{font-size:11px;margin-top:5px;color:#65777d;font-weight:650}
+.user-area{gap:9px;padding:5px 7px 5px 10px;border:1px solid #e1ebe6;border-radius:16px;background:#f8fbf9;box-shadow:0 3px 12px rgba(20,68,49,.04)}
+.user-meta{min-width:0}
+.user-area strong{font-size:12px;white-space:nowrap}
+.user-area small{font-size:10px;margin-top:3px;white-space:nowrap}
+.avatar{width:40px;height:40px;font-size:18px;box-shadow:inset 0 0 0 1px rgba(37,129,84,.08)}
+.header-icon{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-size:19px;color:#31524a;background:transparent;transition:.18s ease}
+.header-icon:hover{background:#e9f5ef;color:#12633c}
+
+/* Navegação inferior: seis destinos sempre visíveis em telas pequenas. */
+.bottom-nav{
+  z-index:50;
+  display:grid;
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  align-items:stretch;
+  justify-content:initial;
+  gap:4px;
+  padding:7px max(8px,env(safe-area-inset-left)) calc(7px + env(safe-area-inset-bottom));
+  background:rgba(255,255,255,.97);
+  border-top:1px solid #dfe9e4;
+  box-shadow:0 -8px 24px rgba(20,68,49,.08);
+}
+.bottom-nav button,
+.bottom-nav button:first-child{
+  width:100%;min-width:0;max-width:none;flex:initial;
+  padding:7px 1px 6px;
+  border-radius:12px;
+  overflow:hidden;
+}
+.bottom-nav button span{font-size:19px;line-height:1.05}
+.bottom-nav button small{font-size:9px;line-height:1.1;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bottom-nav button.active{box-shadow:inset 0 0 0 1px rgba(25,131,79,.08)}
+
+@media(max-width:760px){
+  .app-header{padding:11px 12px 10px;min-height:64px}
+  .brand-mark{width:42px;height:42px;flex-basis:42px;border-radius:12px}
+  .brand-name{font-size:17px;letter-spacing:-.5px}
+  .brand-subtitle{font-size:8px;margin-top:3px;white-space:nowrap}
+  .user-area{padding:4px 5px 4px 7px;gap:5px;border-radius:13px}
+  .user-meta{display:block!important;max-width:88px;overflow:hidden}
+  .user-area strong{display:block;font-size:9px;overflow:hidden;text-overflow:ellipsis}
+  .user-area small{display:block;font-size:8px;overflow:hidden;text-overflow:ellipsis}
+  .avatar{width:32px;height:32px;font-size:15px}
+  .header-icon{width:30px;height:30px;font-size:17px;border-radius:9px}
+  #view{padding-bottom:112px}
+}
+@media(max-width:390px){
+  .brand-area{gap:8px}
+  .brand-mark{width:38px;height:38px;flex-basis:38px;border-radius:11px}
+  .brand-name{font-size:15px}
+  .brand-subtitle{font-size:7px}
+  .user-area{gap:3px;padding-left:5px}
+  .user-meta{max-width:62px}
+  .user-area strong{font-size:8px}
+  .user-area small{font-size:7px}
+  .avatar{width:29px;height:29px;font-size:13px}
+  .header-icon{width:27px;height:27px;font-size:15px}
+  .bottom-nav{gap:2px;padding-left:4px;padding-right:4px}
+  .bottom-nav button{padding:6px 0 5px;border-radius:10px}
+  .bottom-nav button span{font-size:17px}
+  .bottom-nav button small{font-size:8px;margin-top:3px}
+}
+
+/* V9 - cabeçalho profissional, menu superior e navegação lateral */
+.app-header{
+  position:sticky;
+  top:0;
+  z-index:30;
+  background:rgba(255,255,255,.96);
+  border-bottom:1px solid var(--line);
+  box-shadow:0 5px 24px rgba(16,65,45,.06);
+  transition:transform .24s ease,opacity .24s ease,background .2s ease;
+}
+.app-header.header-hidden{
+  transform:translateY(-110%);
+  opacity:0;
+  pointer-events:none;
+}
+.brand-mark{display:grid;place-items:center;width:48px;height:48px;flex:0 0 48px;overflow:hidden;border-radius:14px}
+.brand-mark img{display:block;width:48px;height:48px;object-fit:cover;border-radius:14px}
+.user-area{padding:8px 10px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.8);box-shadow:0 5px 18px rgba(16,65,45,.05)}
+.header-menu-button{
+  display:inline-grid;
+  place-items:center;
+  width:40px;
+  height:40px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--primary-soft);
+  color:var(--primary-dark);
+  font-size:22px;
+  font-weight:900;
+  line-height:1;
+}
+.floating-nav-trigger{position:static!important;width:40px!important;height:40px!important;border-radius:12px!important;font-size:0!important;box-shadow:none!important}
+.floating-nav-trigger::before{content:'☰';font-size:22px}
+.floating-nav-panel{
+  position:fixed;
+  top:88px;
+  right:18px;
+  bottom:auto;
+  z-index:40;
+  min-width:238px;
+  max-width:calc(100vw - 36px);
+  max-height:calc(100vh - 108px);
+  overflow:auto;
+  background:var(--white);
+  border:1px solid var(--line);
+  border-radius:20px;
+  box-shadow:0 18px 55px rgba(7,43,30,.22);
+}
+.floating-nav-heading{padding:5px 10px 10px;color:var(--muted);font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+.floating-nav-panel .nav-main-item,
+.floating-nav-panel .nav-sub-item{
+  width:100%;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  text-align:left;
+  border:1px solid transparent;
+  background:transparent;
+  color:var(--ink);
+  border-radius:12px;
+  padding:11px 12px;
+  font-size:12px;
+  font-weight:800;
+}
+.floating-nav-panel .nav-main-item span{width:22px;font-size:19px;text-align:center}
+.floating-nav-panel .nav-main-item.active{background:var(--primary-soft);color:var(--primary-dark);border-color:var(--line)}
+.floating-nav-panel .nav-sub-item{padding-left:44px;font-weight:700}
+.floating-nav-panel .nav-main-item:hover,.floating-nav-panel .nav-sub-item:hover{background:var(--primary-soft)}
+.floating-nav-divider{margin:8px 0 4px;padding:10px 12px 5px;border-top:1px solid var(--line);color:var(--muted);font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+#view{padding-bottom:32px!important}
+:root[data-theme="dark"] .app-header{
+  background:rgba(23,33,30,.98);
+  border-bottom-color:#35453f;
+  box-shadow:0 5px 24px rgba(0,0,0,.22);
+}
+:root[data-theme="dark"] .user-area{
+  background:#202b27;
+  border-color:#35453f;
+}
+:root[data-theme="dark"] .brand-subtitle{color:#a5b8b0}
+:root[data-theme="dark"] .header-icon{color:#d5e9df}
+:root[data-theme="dark"] .header-menu-button{
+  background:#294b3e;
+  border-color:#426452;
+  color:#a8e7c6;
+}
+:root[data-theme="dark"] .floating-nav-panel{
+  box-shadow:0 18px 55px rgba(0,0,0,.42);
+}
+@media(max-width:470px){
+  .app-header{padding:10px 12px 9px;gap:8px}
+  .brand-area{gap:8px;min-width:0}
+  .brand-mark,.brand-mark img{width:40px;height:40px}
+  .brand-mark{flex-basis:40px;border-radius:11px}
+  .brand-name{font-size:17px;letter-spacing:-.7px}
+  .brand-subtitle{font-size:8px}
+  .user-area{gap:5px;padding:5px}
+  .avatar{width:35px;height:35px}
+  .header-icon,.header-menu-button{width:34px;height:34px;font-size:18px}
+  .floating-nav-panel{top:70px;right:10px;max-width:calc(100vw - 20px)}
+}
+
+/* V4 - cabeçalho sempre visível e menu estável */
+.app-header{
+  position:sticky !important;
+  top:0 !important;
+  z-index:100 !important;
+  transform:none !important;
+  opacity:1 !important;
+  pointer-events:auto !important;
+  background:rgba(255,255,255,.97) !important;
+  box-shadow:0 8px 28px rgba(20,68,49,.10) !important;
+}
+.app-header.header-hidden{
+  transform:none !important;
+  opacity:1 !important;
+  pointer-events:auto !important;
+}
+.floating-nav-panel{z-index:120 !important;}
+:root[data-theme="dark"] .app-header{background:rgba(23,33,30,.98) !important;}
+
+
+/* V5 - perfil no menu, logout no rodape do menu e avatar por foto */
+.avatar-button{border:0;cursor:pointer;padding:0;overflow:hidden;position:relative}
+.avatar-button img{width:100%;height:100%;display:block;object-fit:cover;border-radius:50%}
+.avatar-button.has-photo{background:#1d5f43}
+.floating-nav-footer{margin-top:8px;padding-top:10px;border-top:1px solid var(--line);display:grid;gap:6px}
+.floating-nav-footer button{justify-content:flex-start!important}
+.floating-nav-footer .nav-profile-photo{color:var(--ink);background:transparent}
+.floating-nav-footer .nav-logout-item{color:#b84242;background:transparent}
+.floating-nav-footer .nav-profile-photo:hover{background:var(--primary-soft)}
+.floating-nav-footer .nav-logout-item:hover{background:#fff0ef}
+.compact-notification-panel{padding:14px 18px!important}
+.compact-notification-panel .toolbar{margin:9px 0 5px}
+:root[data-theme="dark"] .floating-nav-footer .nav-logout-item:hover{background:#4a2928}
