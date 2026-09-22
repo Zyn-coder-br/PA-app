@@ -36,3 +36,9 @@ V3 visual: painel com hero verde e identidade visual profissional, preservando a
 ## V16 — Cadastro dos corredores no Supabase
 
 Antes de sincronizar produtos ou batidas, execute `SUPABASE_V16_SEED_CORRIDORS.sql` no SQL Editor do Supabase. O aplicativo usa o número do corredor local para localizar o registro correspondente na tabela `corridors`. Sem esses registros, a sincronização falha com a mensagem "Corredor X não encontrado no Supabase".
+
+## V18 — Exclusão compartilhada de produtos
+
+A exclusão de produtos agora tenta remover o registro no Supabase antes de remover o item do armazenamento local. O evento `DELETE` do Realtime usa o registro antigo (`old`) para retirar o mesmo produto dos demais dispositivos conectados.
+
+Execute `SUPABASE_V18_DELETE_SHARED_PRODUCTS.sql` no SQL Editor do Supabase para habilitar a política de exclusão autenticada e o `REPLICA IDENTITY FULL`.

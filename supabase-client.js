@@ -216,6 +216,16 @@
     return result.data;
   }
 
+  async function deleteProducts(ids) {
+    const list = Array.from(new Set((Array.isArray(ids) ? ids : []).filter(Boolean).map(String)));
+    if (!list.length) return { deleted: 0 };
+    const client = await init();
+    const result = await client.from('products').delete().in('id', list).select('id');
+    if (result.error) throw result.error;
+    console.info('[VPA] Produtos removidos do Supabase:', result.data?.length || 0);
+    return { deleted: result.data?.length || 0, ids: list };
+  }
+
   async function syncProducts(products) {
     const list = Array.isArray(products) ? products : [];
     const results = { total: list.length, synced: 0, failed: 0, errors: [] };
@@ -370,6 +380,7 @@
     getProfile: getProfile,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
+    deleteProducts: deleteProducts,
     syncBatch: syncBatch,
     syncBatches: syncBatches,
     listProducts: listProducts,

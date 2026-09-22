@@ -378,9 +378,9 @@ function notifyTeamEvent(payload) {
 
 function notifyProductEvent(payload) {
   mergeCloudProductEvent(payload);
-  const row = payload?.new || payload?.record || {};
-  const old = payload?.old || {};
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
+  const old = payload?.old || {};
   if (!row.id || row.registered_by === teamRealtimeUserId) return;
   const name = row.name || 'Produto';
   const expiry = row.expiration_date ? ` · vence em ${row.expiration_date}` : '';
@@ -895,11 +895,23 @@ async function quickAddTag() {
 async function deleteSelectedProducts() {
   const ids = currentProductSelection();
   if (!ids.length) { alert('Selecione pelo menos um produto.'); return; }
-  if (!(await askConfirm('Excluir produtos?', `Serão excluídos ${ids.length} produto(s) selecionado(s). Essa ação não pode ser desfeita.`))) return;
-  data.products = data.products.filter((p) => !ids.includes(p.id));
-  selectedProducts.clear();
-  await save();
-  render();
+  if (!(await askConfirm('Excluir produtos?', `Serão excluídos ${ids.length} produto(s) selecionado(s) de todos os dispositivos conectados. Essa ação não pode ser desfeita.`))) return;
+  const status = $('syncProductsStatus');
+  try {
+    if (window.VPASupabase?.isConfigured?.() && window.VPASupabase.deleteProducts) {
+      if (status) status.textContent = 'Removendo produtos do banco compartilhado...';
+      await window.VPASupabase.deleteProducts(ids);
+    }
+    data.products = data.products.filter((p) => !ids.includes(p.id));
+    selectedProducts.clear();
+    await save();
+    render();
+    showTeamToast('✅ Produto(s) removido(s) do banco compartilhado e deste dispositivo.', 'success');
+  } catch (error) {
+    console.error('[VPA] Falha ao excluir produtos compartilhados:', error);
+    showTeamToast('❌ Não foi possível excluir no banco compartilhado: ' + (error.message || 'erro desconhecido'), 'error');
+    if (status) status.textContent = 'Falha ao excluir no Supabase: ' + (error.message || 'erro desconhecido');
+  }
 }
 async function applyBulkStatus() {
   const ids = currentProductSelection();
