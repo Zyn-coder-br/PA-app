@@ -432,14 +432,14 @@ async function mergeCloudProducts() {
   if (!window.VPASupabase?.listProducts) return;
   try {
     const rows = await window.VPASupabase.listProducts();
-    const cloudIds = new Set(rows.map((row) => String(row.id)));
-    const pendingLocal = data.products.filter((product) => product.syncPending === true && !cloudIds.has(String(product.id)));
+    // A nuvem é a fonte oficial: não reintroduzir produtos locais ausentes no Supabase.
+    // Somente registros presentes na nuvem entram na lista principal após o carregamento.
     const merged = rows.map((row) => {
       const local = data.products.find((product) => String(product.id) === String(row.id));
       const cloud = localProductFromCloud(row);
       return { ...local, ...cloud, syncPending: false, photo: local?.photo || '' };
     });
-    data.products = [...merged, ...pendingLocal];
+    data.products = merged;
     await save();
     render();
   } catch (error) {
@@ -1068,18 +1068,9 @@ async function autoSyncAllOnLogin(reason = 'login') {
     const result = { products: null, batches: null, cloudLoaded: false };
     try {
       console.info('[VPA] Sincronização automática iniciada:', reason);
-      const pendingProducts = data.products.filter((product) => product.syncPending === true);
-      const productsWithNumbers = pendingProducts.map((product) => {
-        const corridor = data.corridors.find((item) => item.id === product.corridorId);
-        return { ...product, corridorNumber: corridor?.number };
-      });
-      if (productsWithNumbers.length && window.VPASupabase.syncProducts) {
-        result.products = await window.VPASupabase.syncProducts(productsWithNumbers);
-        const successfulIds = new Set(productsWithNumbers.filter((product) => !result.products.errors.some((error) => String(error.id) === String(product.id))).map((product) => String(product.id)));
-        data.products.forEach((product) => { if (successfulIds.has(String(product.id))) product.syncPending = false; });
-        await save();
-        result.products.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática do produto:', item));
-      }
+      // Não reenviar automaticamente registros locais antigos no login.
+      // O carregamento seguinte consulta o Supabase como fonte oficial.
+      result.products = { total: 0, synced: 0, failed: 0, errors: [] };
       const pendingBatches = data.batches.filter((batch) => batch.syncPending === true);
       if (pendingBatches.length && window.VPASupabase.syncBatches) {
         result.batches = await window.VPASupabase.syncBatches(pendingBatches, data.corridors);
