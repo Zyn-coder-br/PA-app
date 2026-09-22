@@ -544,6 +544,7 @@ let teamAutoNotificationAttempted = false;
 
 async function autoActivateTeamAfterLogin(session) {
   if (!session?.user) return;
+  await autoSyncAllOnLogin('login').catch((error) => console.warn('[VPA] Falha na sincronização automática do login:', error));
   await initTeamRealtime();
 
   // A permissão é específica por navegador/perfil. Se já foi concedida,
@@ -625,7 +626,7 @@ async function initTeamRealtime() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V14</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas são enviados automaticamente ao Supabase e compartilhados com a equipe quando a estrutura do banco está configurada.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas locais são sincronizados automaticamente após o login quando o banco está configurado. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1036,6 +1037,42 @@ async function syncLocalProductsToCloud() {
   }
 }
 
+
+let autoSyncInProgress = null;
+
+async function autoSyncAllOnLogin(reason = 'login') {
+  if (!window.VPASupabase?.isConfigured?.()) return { skipped: true, reason: 'supabase-not-configured' };
+  if (autoSyncInProgress) return autoSyncInProgress;
+  autoSyncInProgress = (async () => {
+    const result = { products: null, batches: null, cloudLoaded: false };
+    try {
+      console.info('[VPA] Sincronização automática iniciada:', reason);
+      const productsWithNumbers = data.products.map((product) => {
+        const corridor = data.corridors.find((item) => item.id === product.corridorId);
+        return { ...product, corridorNumber: corridor?.number };
+      });
+      if (productsWithNumbers.length && window.VPASupabase.syncProducts) {
+        result.products = await window.VPASupabase.syncProducts(productsWithNumbers);
+        result.products.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática do produto:', item));
+      }
+      if (data.batches.length && window.VPASupabase.syncBatches) {
+        result.batches = await window.VPASupabase.syncBatches(data.batches, data.corridors);
+        result.batches.errors?.forEach((item) => console.warn('[VPA] Falha na sincronização automática da batida:', item));
+      }
+      await mergeCloudProducts();
+      await mergeCloudBatidas();
+      result.cloudLoaded = true;
+      console.info('[VPA] Sincronização automática concluída:', result);
+      return result;
+    } catch (error) {
+      console.warn('[VPA] Sincronização automática após login falhou:', error.message || error);
+      return { ...result, error: error.message || String(error) };
+    } finally {
+      autoSyncInProgress = null;
+    }
+  })();
+  return autoSyncInProgress;
+}
 
 async function syncLocalBatchesToCloud() {
   const status = $('syncBatchesStatus');

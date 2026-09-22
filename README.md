@@ -32,3 +32,7 @@ V3 visual: painel com hero verde e identidade visual profissional, preservando a
 - Evita assinar o mesmo canal Realtime mais de uma vez.
 - Remove a validação incorreta que tratava o objeto de canal retornado por `subscribe()` como se fosse um status textual.
 - Mantém os canais de `batidas` e `products` compartilhados.
+
+## V16 — Cadastro dos corredores no Supabase
+
+Antes de sincronizar produtos ou batidas, execute `SUPABASE_V16_SEED_CORRIDORS.sql` no SQL Editor do Supabase. O aplicativo usa o número do corredor local para localizar o registro correspondente na tabela `corridors`. Sem esses registros, a sincronização falha com a mensagem "Corredor X não encontrado no Supabase".
