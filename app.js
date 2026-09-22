@@ -343,6 +343,25 @@ function showTeamToast(message, type = 'info') {
   showTeamToast.timer = window.setTimeout(() => { toast.hidden = true; }, 6500);
 }
 
+async function showRealtimeNotification(title, body, tag, url = './') {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const options = {
+    body,
+    icon: './icons/notification-small.png',
+    badge: './icons/notification-small.png',
+    tag,
+    renotify: true,
+    data: { url }
+  };
+  try {
+    const registration = await navigator.serviceWorker?.ready;
+    if (registration?.showNotification) await registration.showNotification(title, options);
+    else new Notification(title, options);
+  } catch (error) {
+    console.warn('[VPA] Falha ao mostrar notificação em tempo real:', error);
+  }
+}
+
 function notifyTeamEvent(payload) {
   const row = payload?.new || payload?.record || {};
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
@@ -353,9 +372,84 @@ function notifyTeamEvent(payload) {
   const message = `Equipe: alguém ${statusLabel} uma batida no ${corridorLabel}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
-  if ('Notification' in window && Notification.permission === 'granted') {
-    try { new Notification('Vencimento PA · Equipe', { body: message, icon: './icons/notification-small.png', tag: 'vpa-team-' + row.id }); } catch (error) { console.warn('[VPA] Notificação do navegador indisponível:', error); }
+  showRealtimeNotification('Vencimento PA · Equipe', message, 'vpa-team-' + row.id);
+}
+
+function notifyProductEvent(payload) {
+  mergeCloudProductEvent(payload);
+  const row = payload?.new || payload?.record || {};
+  const old = payload?.old || {};
+  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  if (!row.id || row.registered_by === teamRealtimeUserId) return;
+  const name = row.name || 'Produto';
+  const expiry = row.expiration_date ? ` · vence em ${row.expiration_date}` : '';
+  let action = eventType === 'INSERT' ? 'foi cadastrado' : eventType === 'DELETE' ? 'foi removido' : 'foi atualizado';
+  if (eventType === 'UPDATE' && old.status !== row.status) action = `mudou de status para ${row.status || 'atualizado'}`;
+  const message = `Equipe: ${name} ${action}${expiry}.`;
+  teamNotificationCount += 1;
+  showTeamToast('🔔 ' + message, 'team');
+  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType);
+}
+
+function localProductFromCloud(row) {
+  const meta = row.app_metadata && typeof row.app_metadata === 'object' ? row.app_metadata : {};
+  const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
+  const statusMap = { in_corridor: 'corredor', found: 'vencimento', separated: 'separado', resolved: 'resolvido' };
+  return {
+    id: row.id,
+    name: row.name || 'Produto',
+    ean: row.ean || '',
+    corridorId: corridor?.id || null,
+    corridorNumber: corridor?.number || null,
+    expiry: row.expiration_date || '',
+    quantity: Number(row.quantity_found || 0),
+    quantitySeparated: Number(row.quantity_separated || 0),
+    status: statusMap[row.status] || 'corredor',
+    createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || null,
+    batchId: meta.batchId || null,
+    origemCadastro: meta.origemCadastro || 'nuvem',
+    categoriaCadastro: meta.categoriaCadastro || (meta.fefo ? 'fefo' : meta.promotor ? 'promotor' : 'general'),
+    tag: meta.tag || '',
+    fefo: Boolean(meta.fefo),
+    promotor: Boolean(meta.promotor),
+    piqueConcluido: Boolean(meta.piqueConcluido),
+    piqueAt: meta.piqueAt || null,
+    piqueTipo: meta.piqueTipo || null,
+    cloudRegisteredBy: row.registered_by || null
+  };
+}
+
+async function mergeCloudProducts() {
+  if (!window.VPASupabase?.listProducts) return;
+  try {
+    const rows = await window.VPASupabase.listProducts();
+    const byId = new Map(data.products.map((p) => [String(p.id), p]));
+    rows.forEach((row) => {
+      const cloud = localProductFromCloud(row);
+      const local = byId.get(String(row.id));
+      byId.set(String(row.id), { ...local, ...cloud, photo: local?.photo || '' });
+    });
+    data.products = Array.from(byId.values());
+    await save();
+    render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar produtos compartilhados:', error.message || error);
   }
+}
+
+function mergeCloudProductEvent(payload) {
+  const row = payload?.new || payload?.record;
+  if (!row?.id) return;
+  if (payload?.eventType === 'DELETE' || payload?.event === 'DELETE') {
+    data.products = data.products.filter((p) => String(p.id) !== String(row.id));
+  } else {
+    const cloud = localProductFromCloud(row);
+    const index = data.products.findIndex((p) => String(p.id) === String(row.id));
+    if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, photo: data.products[index].photo || '' };
+    else data.products.push(cloud);
+  }
+  save().then(() => render()).catch((error) => console.warn('[VPA] Falha ao salvar produto compartilhado:', error));
 }
 
 async function mergeCloudBatidas() {
@@ -366,7 +460,7 @@ async function mergeCloudBatidas() {
     const statusMap = { in_progress: 'aberta', completed: 'finalizada', cancelled: 'cancelada' };
     rows.forEach((row) => {
       const local = localById.get(String(row.id)) || {};
-      const corridor = data.corridors.find((c) => String(c.number) === String(row.corridor_id));
+      const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
       const merged = {
         ...local,
         id: row.id,
@@ -508,7 +602,10 @@ async function initTeamRealtime() {
     }
     teamRealtimeUserId = session.user.id;
     await mergeCloudBatidas();
-    teamRealtimeChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
+    await mergeCloudProducts();
+    const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
+    const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel };
     teamRealtimeActive = true;
     showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
   } catch (error) {
@@ -519,7 +616,7 @@ async function initTeamRealtime() {
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V10</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Use esta opção apenas para autorizar os avisos do navegador neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V12</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas são enviados automaticamente ao Supabase e compartilhados com a equipe quando a estrutura do banco está configurada.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -849,8 +946,19 @@ async function runFefoOcr() {
 async function importFefoItems() {
   if (!fefoOcrItems.length) { alert('Leia uma lista e confira pelo menos um item antes de confirmar.'); return; }
   const corridorId = data.corridors[0]?.id || '';
-  fefoOcrItems.filter(it => it.name && it.expiry).forEach((it) => data.products.push({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false }));
-  await save(); $('fefoScannerDialog').close(); $('productDialog').close(); render();
+  const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false }));
+  imported.forEach((product) => data.products.push(product));
+  await save();
+  const corridor = data.corridors.find((c) => c.id === corridorId);
+  try {
+    const result = await window.VPASupabase?.syncProducts?.(imported.map((p) => ({ ...p, corridorNumber: corridor?.number })));
+    if (result && result.failed) showTeamToast(`⚠️ FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
+    else if (result?.synced) showTeamToast(`☁️ ${result.synced} item(ns) FEFO enviado(s) ao banco compartilhado.`, 'success');
+  } catch (error) {
+    console.warn('[VPA] Sincronização automática do FEFO falhou:', error.message || error);
+    showTeamToast('⚠️ FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+  }
+  $('fefoScannerDialog').close(); $('productDialog').close(); render();
 }
 let piquePhotoData = '';
 let piqueProductId = null;
@@ -1102,6 +1210,15 @@ $('productForm').addEventListener('submit', async (e) => {
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
+  const corridor = data.corridors.find((c) => c.id === product.corridorId);
+  try {
+    const result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+    if (result?.failed) showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao Supabase. Abra Ajustes para ver a sincronização.', 'warning');
+    else if (result?.synced) showTeamToast('☁️ Produto enviado ao banco compartilhado.', 'success');
+  } catch (error) {
+    console.warn('[VPA] Sincronização automática do produto falhou:', error.message || error);
+    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+  }
   $('productDialog').close();
   $('corridor').disabled = false;
   render();

@@ -26,3 +26,8 @@ O botão de teste usa Service Worker `showNotification`, inclui vibração quand
 ## V8 — Logo nas notificações
 
 As notificações locais e a base de Web Push usam `icons/notification-logo.png` como `icon` e `badge`. O cache do Service Worker foi atualizado para forçar a carga do novo recurso.
+
+
+## V9 — Ícone do sistema e histórico de corredores
+
+A V9 usa um ícone monocromático transparente próprio para a área de status do Android. A tela Batidas → Histórico agora mostra a supervisão dos corredores com contagem crescente de dias, faixas verde/amarela/vermelha e histórico de batidas finalizadas.

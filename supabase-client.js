@@ -181,7 +181,19 @@
       quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
       expiration_date: product.expiry || null,
       status: statusMap[product.status] || 'found',
-      registered_by: session.user.id
+      registered_by: session.user.id,
+      app_metadata: {
+        fefo: Boolean(product.fefo),
+        promotor: Boolean(product.promotor),
+        piqueConcluido: Boolean(product.piqueConcluido),
+        piqueAt: product.piqueAt || null,
+        piqueTipo: product.piqueTipo || null,
+        batchId: product.batchId || null,
+        createdAt: product.createdAt || null,
+        origemCadastro: product.origemCadastro || null,
+        categoriaCadastro: product.categoriaCadastro || null,
+        tag: product.tag || ''
+      }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
     const result = await client.from('products').upsert(payload, { onConflict: 'id' }).select().single();
@@ -260,6 +272,17 @@
     return results;
   }
 
+  async function listProducts() {
+    const client = await init();
+    const result = await client
+      .from('products')
+      .select('id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
   async function listBatidas() {
     const client = await init();
     const result = await client
@@ -279,8 +302,27 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'batidas' }, function (payload) {
         try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de batida:', error); }
       });
-    const status = await channel.subscribe();
+    const status = await channel.subscribe((subscriptionStatus, error) => {
+      if (subscriptionStatus === 'SUBSCRIBED') console.info('[VPA] Realtime batidas conectado.');
+      else console.warn('[VPA] Realtime batidas:', subscriptionStatus, error || '');
+    });
     if (status !== 'SUBSCRIBED') console.warn('[VPA] Canal de batidas não confirmou inscrição:', status);
+    return channel;
+  }
+
+  async function subscribeProducts(onChange) {
+    const client = await init();
+    if (typeof onChange !== 'function') throw new Error('Callback de produtos inválido.');
+    const channel = client
+      .channel('vpa-produtos-equipe')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, function (payload) {
+        try { onChange(payload); } catch (error) { console.warn('[VPA] Falha ao processar evento de produto:', error); }
+      });
+    const status = await channel.subscribe((subscriptionStatus, error) => {
+      if (subscriptionStatus === 'SUBSCRIBED') console.info('[VPA] Realtime produtos conectado.');
+      else console.warn('[VPA] Realtime produtos:', subscriptionStatus, error || '');
+    });
+    if (status !== 'SUBSCRIBED') console.warn('[VPA] Canal de produtos não confirmou inscrição:', status);
     return channel;
   }
 
@@ -313,8 +355,10 @@
     syncProducts: syncProducts,
     syncBatch: syncBatch,
     syncBatches: syncBatches,
+    listProducts: listProducts,
     listBatidas: listBatidas,
     subscribeBatidas: subscribeBatidas,
+    subscribeProducts: subscribeProducts,
     unsubscribe: unsubscribe,
     getClient: function () { return state.client; }
   };

@@ -1,4 +1,4 @@
-const CACHE = 'vpa-pwa-v10-history-icon';
+const CACHE = 'vpa-pwa-v11-realtime-notifications';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './supabase-client.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-small.png', './icons/notification-logo.png'
