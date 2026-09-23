@@ -82,8 +82,14 @@ function statusLabel(status) {
   return ({ corredor: 'Ainda no corredor', vencimento: 'Área de vencimento' }[status] || status || 'Ainda no corredor');
 }
 function visibleProducts() {
-  const openIds = new Set(data.batches.filter((b) => b.status === 'aberta').map((b) => b.id));
-  return data.products.filter((p) => !p.piqueConcluido && (!p.batchId || !openIds.has(p.batchId)));
+  const openIds = new Set(data.batches.filter((b) => b.status === 'aberta').map((b) => String(b.id)));
+  return data.products.filter((p) => {
+    if (p.piqueConcluido) return false;
+    // Produtos vinculados a uma batida aberta permanecem somente na tela da batida.
+    // A comparação é feita como texto para evitar divergências entre UUID/número.
+    if (p.batchId && openIds.has(String(p.batchId))) return false;
+    return true;
+  });
 }
 function productImage(p) {
   if (p.photo) return `<img src="${esc(p.photo)}" alt="${esc(p.name || 'Produto')}" loading="lazy">`;
@@ -460,7 +466,15 @@ async function mergeCloudProducts(shouldRender = true) {
     const merged = rows.map((row) => {
       const local = data.products.find((product) => String(product.id) === String(row.id));
       const cloud = localProductFromCloud(row);
-      return { ...local, ...cloud, syncPending: false, photo: local?.photo || '' };
+      return {
+        ...local,
+        ...cloud,
+        // A nuvem pode não devolver app_metadata; preservar o vínculo local da batida.
+        batchId: cloud.batchId || local?.batchId || null,
+        origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
+        syncPending: false,
+        photo: local?.photo || ''
+      };
     });
     data.products = merged;
     await save();
@@ -479,8 +493,18 @@ function mergeCloudProductEvent(payload) {
   } else {
     const cloud = localProductFromCloud(row);
     const index = data.products.findIndex((product) => String(product.id) === String(row.id));
-    if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, syncPending: false, photo: data.products[index].photo || '' };
-    else data.products.push({ ...cloud, syncPending: false });
+    if (index >= 0) {
+      const previous = data.products[index];
+      data.products[index] = {
+        ...previous,
+        ...cloud,
+        // Não perder o vínculo da batida quando o evento remoto não traz app_metadata.
+        batchId: cloud.batchId || previous.batchId || null,
+        origemCadastro: cloud.origemCadastro || previous.origemCadastro || 'nuvem',
+        syncPending: false,
+        photo: previous.photo || ''
+      };
+    } else data.products.push({ ...cloud, syncPending: false });
   }
   scheduleCloudSave();
   scheduleRealtimeRender();

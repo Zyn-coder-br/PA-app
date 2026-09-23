@@ -710,3 +710,74 @@ body{
 :root[data-theme="dark"] .products-hero-action{background:#202b27;color:#a8e7c6;border-color:#426452}
 :root[data-theme="dark"] .products-mini-count{background:#254b3c;color:#a8e7c6}
 :root[data-theme="dark"] .products-list .product-row{border-color:var(--line)}
+
+
+/* V27 - correções de batida, menu flutuante e hover coerente no tema escuro */
+.bulk-actions-dock {
+  flex-direction: column-reverse;
+}
+.bulk-fab {
+  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+  animation: bulkFabPulse 2.8s ease-in-out infinite;
+}
+.bulk-fab:hover,
+.bulk-fab:focus-visible {
+  transform: translateY(-2px) scale(1.04);
+  filter: brightness(1.08);
+  box-shadow: 0 12px 32px rgba(0,0,0,.30);
+}
+.bulk-fab:focus-visible { outline: 3px solid var(--primary-soft); outline-offset: 3px; }
+@keyframes bulkFabPulse {
+  0%, 100% { box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+  50% { box-shadow: 0 12px 34px rgba(25,131,79,.34); }
+}
+.bulk-actions-menu {
+  animation: bulkMenuUp .18s ease-out;
+  transform-origin: bottom right;
+}
+@keyframes bulkMenuUp {
+  from { opacity: 0; transform: translateY(8px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* O hover nunca deve voltar para branco quando o tema escuro está ativo. */
+:root[data-theme="dark"] .product-row:hover,
+:root[data-theme="dark"] .team-row:hover,
+:root[data-theme="dark"] .products-list .product-row:hover,
+:root[data-theme="dark"] .standard-page .product-row:hover,
+:root[data-theme="dark"] .subnav-btn:hover,
+:root[data-theme="dark"] .secondary:hover,
+:root[data-theme="dark"] .bulk-actions-menu button:hover,
+:root[data-theme="dark"] .row-action:hover,
+:root[data-theme="dark"] .product-thumb:hover,
+:root[data-theme="dark"] .header-icon:hover,
+:root[data-theme="dark"] .floating-nav-panel button:hover,
+:root[data-theme="dark"] .bottom-nav button:hover {
+  background: #2a4036 !important;
+  color: var(--ink) !important;
+  border-color: #466b59 !important;
+}
+:root[data-theme="dark"] .primary:hover,
+:root[data-theme="dark"] .bulk-fab:hover {
+  background: #3b9d6b !important;
+  color: #ffffff !important;
+}
+:root[data-theme="dark"] .danger-btn:hover,
+:root[data-theme="dark"] .floating-nav-footer .nav-logout-item:hover {
+  background: #4a2928 !important;
+  color: #ffb1b1 !important;
+}
+:root[data-theme="dark"] .products-hero-action:hover {
+  background: #2a4036 !important;
+  color: #a8e7c6 !important;
+}
+:root[data-theme="dark"] .search:hover,
+:root[data-theme="dark"] input:hover,
+:root[data-theme="dark"] select:hover,
+:root[data-theme="dark"] textarea:hover {
+  background: #22332b !important;
+  border-color: #466b59 !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bulk-fab, .bulk-actions-menu { animation: none !important; transition: none !important; }
+}
