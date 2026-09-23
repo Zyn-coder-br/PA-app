@@ -387,7 +387,7 @@
     const client = await init();
     const result = await client
       .from('promotor_products')
-      .select('id, user_id, name, ean, company, photo_url, location, expiration_date, quantity, status, created_at')
+      .select('id, user_id, name, ean, company, photo_url, location, expiration_date, quantity, status, tag, created_at')
       .order('created_at', { ascending: false })
       .limit(5000);
     if (result.error) throw result.error;
@@ -434,6 +434,24 @@
     return subscribeChannel('vpa-produtos-equipe', 'products', onChange, 'produtos');
   }
 
+  async function subscribePromotorProducts(onChange) {
+    return subscribeChannel('vpa-promotor-products', 'promotor_products', onChange, 'produtos do Promotor PA');
+  }
+
+  async function deletePromotorProduct(productId) {
+    const client = await init();
+    const result = await client.rpc('delete_promotor_product_from_vpa', { p_product_id: productId });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function updatePromotorProductTag(productId, tag) {
+    const client = await init();
+    const result = await client.rpc('tag_promotor_product_from_vpa', { p_product_id: productId, p_tag: tag });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function unsubscribe(channel) {
     const client = await init();
     if (channel) {
@@ -478,6 +496,9 @@
     listBatidas: listBatidas,
     subscribeBatidas: subscribeBatidas,
     subscribeProducts: subscribeProducts,
+    subscribePromotorProducts: subscribePromotorProducts,
+    deletePromotorProduct: deletePromotorProduct,
+    updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,
     getClient: function () { return state.client; }
   };

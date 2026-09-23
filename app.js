@@ -367,7 +367,7 @@ function scheduleCloudSave() {
 }
 function pendingProductCard(p) {
   const d = daysTo(p.expiry);
-  const label = d === 0 ? 'VENCE HOJE' : 'VENCE AMANHÃ';
+  const label = d < 0 ? 'VENCIDO' : d === 0 ? 'VENCE HOJE' : d === 1 ? 'VENCE AMANHÃ' : `FALTAM ${d} DIAS`;
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '<span class="meta">Sem tag PLU</span>';
   const c = data.corridors.find((x) => x.id === p.corridorId);
   return `<article class="pending-card"><div class="pending-card-main"><button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div class="pending-product-info"><div class="pending-title">${esc(p.name)}</div><div class="meta">EAN: ${esc(p.ean || 'Não informado')}</div><div class="meta">${tag} · ${esc(c?.name || 'Sem corredor')}</div><div class="meta">Validade: ${fmt(p.expiry)} · Qtd.: ${Number(p.quantity || 0)}</div></div></div><div class="pending-card-side"><span class="pending-deadline">${label}</span><button class="primary pique-btn" data-open-pique="${p.id}">📷 RETIRADA / PIQUE</button></div></article>`;
@@ -376,13 +376,14 @@ function pendingSection(title, list) {
   return `<section class="pending-group"><div class="pending-group-head"><h3>${title}</h3><span class="product-count">${list.length} produto${list.length === 1 ? '' : 's'}</span></div><div class="pending-list">${groupedPendingCards(list) || '<div class="empty">Nenhum produto nesta lista.</div>'}</div></section>`;
 }
 function pending() {
-  const dueSoon = (p) => { const d = daysTo(p.expiry); return d === 0 || d === 1; };
+  const dueSoon = (p) => { const d = daysTo(p.expiry); return d >= 0 && d <= 10; };
   const pendingBase = visibleProducts().filter((p) => dueSoon(p) && !p.piqueConcluido && p.status !== 'resolvido');
   const list = pendingBase.filter((p) => pendingFilter === 'fefo' ? Boolean(p.fefo) : !p.fefo).sort((a,b) => a.expiry.localeCompare(b.expiry));
   const todayList = list.filter((p) => daysTo(p.expiry) === 0);
   const tomorrowList = list.filter((p) => daysTo(p.expiry) === 1);
+  const nextDaysList = list.filter((p) => daysTo(p.expiry) >= 2 && daysTo(p.expiry) <= 10);
   const title = pendingFilter === 'fefo' ? 'PIQUE FEFO' : 'PIQUE';
-  return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Pendências</h2><p class="panel-sub">${title}: retire e confirme com uma foto cada produto que vence hoje ou amanhã.</p></div></div><div class="subnav"><button class="subnav-btn ${pendingFilter==='pique'?'active':''}" data-pending-filter="pique">🔴 PIQUE</button><button class="subnav-btn ${pendingFilter==='fefo'?'active':''}" data-pending-filter="fefo">🔵 PIQUE FEFO</button></div><div class="panel pending-panel">${pendingSection('Vence Hoje', todayList)}${pendingSection('Vence Amanhã', tomorrowList)}</div>`;
+  return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Pendências</h2><p class="panel-sub">${title}: retire e confirme com uma foto os produtos que vencem nos próximos 10 dias.</p></div></div><div class="subnav"><button class="subnav-btn ${pendingFilter==='pique'?'active':''}" data-pending-filter="pique">🔴 PIQUE</button><button class="subnav-btn ${pendingFilter==='fefo'?'active':''}" data-pending-filter="fefo">🔵 PIQUE FEFO</button></div><div class="panel pending-panel">${pendingSection('Vence Hoje', todayList)}${pendingSection('Vence Amanhã', tomorrowList)}${pendingSection('Vence em 2–10 dias', nextDaysList)}</div>`;
 }
 
 function showTeamToast(message, type = 'info') {
@@ -592,7 +593,7 @@ async function mergeCloudPromotorProducts(shouldRender = true) {
       batchId: null,
       origemCadastro: 'promotor_pa',
       categoriaCadastro: 'promotor',
-      tag: '',
+      tag: row.tag || '',
       fefo: false,
       promotor: true,
       piqueConcluido: false,
@@ -777,6 +778,14 @@ async function bindTeamAuthListener() {
   }
 }
 
+function notifyPromotorProductEvent(payload) {
+  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  const row = payload?.new || payload?.record || payload?.old || {};
+  const name = row?.name || 'Produto do Promotor PA';
+  mergeCloudPromotorProducts(true).catch((error) => console.warn('[VPA] Atualização Promotor PA:', error));
+  showTeamToast((eventType === 'DELETE' ? '🗑 Produto removido do Promotor PA: ' : '🔄 Produto atualizado no Promotor PA: ') + name, 'success');
+}
+
 async function initTeamRealtime() {
   if (teamRealtimeActive) return teamRealtimeChannel;
   if (teamRealtimeStarting) return teamRealtimeStarting;
@@ -796,7 +805,8 @@ async function initTeamRealtime() {
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel };
+    const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel };
     teamRealtimeActive = true;
     showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
    } catch (error) {
@@ -1115,7 +1125,13 @@ function openBulkStatusDialog() {
 async function quickAddTag() {
   const ids = currentProductSelection();
   if (!ids.length) { alert('Selecione pelo menos um produto.'); return; }
-  data.products.forEach((p) => { if (ids.includes(p.id)) p.tag = 'PLU/ETIQUETA'; });
+  for (const p of data.products) {
+    if (!ids.includes(p.id)) continue;
+    p.tag = 'PLU/ETIQUETA';
+    if (p.externalPromotor && p.sourceId && window.VPASupabase?.updatePromotorProductTag) {
+      try { await window.VPASupabase.updatePromotorProductTag(p.sourceId, p.tag); } catch (error) { console.warn('[VPA] Tag do Promotor não foi salva:', error); }
+    }
+  }
   await save();
   selectedProducts.clear();
   render();
@@ -1126,9 +1142,13 @@ async function deleteSelectedProducts() {
   if (!(await askConfirm('Excluir produtos?', `Serão excluídos ${ids.length} produto(s) selecionado(s) de todos os dispositivos conectados. Essa ação não pode ser desfeita.`))) return;
   const status = $('syncProductsStatus');
   try {
-    if (window.VPASupabase?.isConfigured?.() && window.VPASupabase.deleteProducts) {
+    if (window.VPASupabase?.isConfigured?.()) {
       if (status) status.textContent = 'Removendo produtos do banco compartilhado...';
-      await window.VPASupabase.deleteProducts(ids);
+      const selected = data.products.filter((p) => ids.includes(p.id));
+      for (const p of selected) {
+        if (p.externalPromotor && p.sourceId && window.VPASupabase.deletePromotorProduct) await window.VPASupabase.deletePromotorProduct(p.sourceId);
+        else if (!p.externalPromotor && window.VPASupabase.deleteProducts) await window.VPASupabase.deleteProducts([p.id]);
+      }
     }
     data.products = data.products.filter((p) => !ids.includes(p.id));
     selectedProducts.clear();
@@ -1327,6 +1347,17 @@ async function confirmPique() {
   p.piqueAt = new Date().toISOString();
   p.status = 'resolvido';
   p.piqueTipo = p.fefo ? 'pique-fefo' : 'pique';
+  if (p.externalPromotor && p.sourceId && window.VPASupabase?.deletePromotorProduct) {
+    try {
+      await window.VPASupabase.deletePromotorProduct(p.sourceId);
+      data.products = data.products.filter((item) => String(item.id) !== String(p.id));
+    } catch (error) {
+      p.piqueConcluido = false;
+      p.status = 'corredor';
+      showTeamToast('⚠️ Retirada registrada localmente, mas não foi possível excluir o produto do Promotor PA.', 'warning');
+      console.warn('[VPA] Falha ao excluir produto do Promotor PA:', error);
+    }
+  }
   await save();
   $('piqueDialog').close();
   piqueProductId = null;
