@@ -53,7 +53,7 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
+  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
 }
 function syncCorridorLastChecksFromBatches() {
   const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
@@ -81,36 +81,15 @@ function badge(date) {
 function statusLabel(status) {
   return ({ corredor: 'Ainda no corredor', vencimento: 'Área de vencimento' }[status] || status || 'Ainda no corredor');
 }
-function isProductInOpenBatch(product) {
-  if (!product) return false;
-  const openBatches = data.batches.filter((batch) => batch.status === 'aberta');
-  if (product.batchId) {
-    return openBatches.some((batch) => String(batch.id) === String(product.batchId));
-  }
-  // Fallback de segurança: algumas respostas antigas do Supabase podem não
-  // trazer app_metadata. Nesse caso, preservamos a regra da batida local
-  // usando a origem, o corredor e o horário de início.
-  if (product.origemCadastro !== 'batida') return false;
-  return openBatches.some((batch) => {
-    if (String(batch.corridorId) !== String(product.corridorId)) return false;
-    if (!product.createdAt || !batch.startedAt) return true;
-    return new Date(product.createdAt).getTime() >= new Date(batch.startedAt).getTime();
-  });
-}
 function visibleProducts() {
+  const openIds = new Set(data.batches.filter((b) => b.status === 'aberta').map((b) => String(b.id)));
   return data.products.filter((p) => {
     if (p.piqueConcluido) return false;
-    // Itens temporários de uma batida nunca entram no catálogo geral.
-    if (p.isTemporaryBatchItem) return false;
-    // Compatibilidade com registros antigos que ainda usam somente o vínculo da batida.
-    if (isProductInOpenBatch(p)) return false;
+    // Produtos vinculados a uma batida aberta permanecem somente na tela da batida.
+    // A comparação é feita como texto para evitar divergências entre UUID/número.
+    if (p.batchId && openIds.has(String(p.batchId))) return false;
     return true;
   });
-}
-function loggedDisplayName() {
-  const profile = window.VPA_PROFILE || {};
-  const name = profile.full_name || profile.name || profile.email || 'Usuário';
-  return String(name).trim() || 'Usuário';
 }
 function productImage(p) {
   if (p.photo) return `<img src="${esc(p.photo)}" alt="${esc(p.name || 'Produto')}" loading="lazy">`;
@@ -176,13 +155,10 @@ function productRow(p, options = {}) {
 }
 function suggestedCorridor() {
   return data.corridors.slice().sort((a, b) => {
-    const daysA = daysWithoutCheck(a);
-    const daysB = daysWithoutCheck(b);
-    const priorityA = daysA === null ? Number.POSITIVE_INFINITY : daysA;
-    const priorityB = daysB === null ? Number.POSITIVE_INFINITY : daysB;
-    // Maior tempo sem batida primeiro; corredores nunca conferidos têm
-    // prioridade máxima. Em empate, mantém a ordem numérica.
-    return priorityB - priorityA || Number(a.number || 0) - Number(b.number || 0);
+    if (!a.lastCheck && !b.lastCheck) return a.number - b.number;
+    if (!a.lastCheck) return -1;
+    if (!b.lastCheck) return 1;
+    return a.lastCheck.localeCompare(b.lastCheck);
   })[0] || { number: 1, name: 'Corredor 1', lastCheck: null };
 }
 
@@ -257,7 +233,7 @@ function dashboard() {
   <section class="dashboard-hero">
     <div class="hero-copy">
       <div class="eyebrow hero-eyebrow">VISÃO GERAL</div>
-      <h1>Olá, ${esc(loggedDisplayName())}! Vamos cuidar das validades?</h1>
+      <h1>Olá, Ramon! Vamos cuidar das validades?</h1>
       <p>Organize suas batidas, acompanhe os produtos e mantenha a operação em dia.</p>
     </div>
     <div class="hero-status"><span></span> Sistema ativo</div>
@@ -266,7 +242,7 @@ function dashboard() {
   <div class="panel-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">▦ Batida de hoje</div><div class="panel-sub">${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div></div><span>📅</span></div><button class="primary big-action" id="newBatch">▶ Iniciar Batida <span>›</span></button><button class="secondary soft-action" id="continueBatch">↻ Continuar última batida <span>›</span></button></section>
   <section class="panel"><div class="panel-head"><div class="panel-title">◎ Progresso do mês</div><span class="panel-sub">${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="progress-row"><span>${checked} de ${corridorTotal} corredores</span><strong>${progress}%</strong></div><div class="mini-grid"><div class="mini"><strong>${checked}</strong><span>Concluídos</span></div><div class="mini warning"><strong>${Math.max(0, corridorTotal - checked)}</strong><span>Pendentes</span></div><div class="mini danger"><strong>${data.corridors.filter((c) => c.lastCheck && Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length}</strong><span>Atrasados</span></div></div><div class="goal">🏆 Meta: conferir todos os corredores pelo menos 1 vez a cada 15 dias.</div></section></div>
   <section class="panel" style="margin-top:14px"><div class="panel-head"><div class="panel-title">⌖ Próximo corredor sugerido</div><span class="priority">PRIORIDADE</span><span class="panel-sub">${corridor.lastCheck ? 'Há ' + days + ' dias sem batida' : 'Ainda não conferido'}</span></div><div class="suggested"><div class="suggested-main"><div class="corridor-icon">▥</div><div><strong>${esc(corridor.name)}</strong><small>Prioridade automática pela última conferência</small></div></div><button class="secondary" id="allCorridors">☷ Ver todos</button></div></section>
-  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">${esc(loggedDisplayName().charAt(0).toUpperCase())}</div><div><div class="product-name">${esc(loggedDisplayName())}</div><div class="meta">${esc(window.VPA_PROFILE?.role || 'Usuário')} · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
+  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">R</div><div><div class="product-name">Ramon</div><div class="meta">Pleno 2 · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
 }
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
@@ -316,7 +292,7 @@ function products() {
 }
 function batches() {
   const active = activeBatch();
-  const activeProducts = active ? data.products.filter((p) => String(p.batchId || '') === String(active.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(active.corridorId))) : [];
+  const activeProducts = active ? data.products.filter((p) => p.batchId === active.id) : [];
   const current = batchTab === 'current';
   const history = data.batches.slice().reverse();
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
@@ -425,7 +401,7 @@ function notifyTeamEvent(payload) {
   }
   const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
   const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
-  const productCount = Number(row.product_count ?? data.products.filter((product) => String(product.batchId || '') === String(row.id)).length);
+  const productCount = data.products.filter((product) => String(product.batchId || '') === String(row.id)).length;
   const message = `Batida realizada · ${corridorLabel} · ${productCount} novo${productCount === 1 ? '' : 's'} produto${productCount === 1 ? '' : 's'}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
@@ -469,8 +445,8 @@ function localProductFromCloud(row) {
     createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || null,
     batchId: meta.batchId || null,
-    origemCadastro: meta.origemCadastro || null,
-    categoriaCadastro: meta.categoriaCadastro || null,
+    origemCadastro: meta.origemCadastro || 'nuvem',
+    categoriaCadastro: meta.categoriaCadastro || (meta.fefo ? 'fefo' : meta.promotor ? 'promotor' : 'general'),
     tag: meta.tag || '',
     fefo: Boolean(meta.fefo),
     promotor: Boolean(meta.promotor),
@@ -481,61 +457,16 @@ function localProductFromCloud(row) {
   };
 }
 
-function localProductFromTemporary(row) {
-  const meta = row.app_metadata && typeof row.app_metadata === 'object' ? row.app_metadata : {};
-  const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
-  const statusMap = { in_corridor: 'corredor', found: 'vencimento', separated: 'separado', resolved: 'resolvido' };
-  return {
-    id: row.id,
-    name: row.name || 'Produto',
-    ean: row.ean || '',
-    corridorId: corridor?.id || null,
-    corridorNumber: corridor?.number || null,
-    expiry: row.expiration_date || '',
-    quantity: Number(row.quantity_found || 0),
-    quantitySeparated: Number(row.quantity_separated || 0),
-    status: statusMap[row.status] || 'corredor',
-    createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
-    updatedAt: row.updated_at || null,
-    batchId: row.batch_id || meta.batchId || null,
-    origemCadastro: meta.origemCadastro || 'batida',
-    categoriaCadastro: meta.categoriaCadastro || 'general',
-    tag: meta.tag || '',
-    fefo: Boolean(meta.fefo),
-    promotor: Boolean(meta.promotor),
-    piqueConcluido: Boolean(meta.piqueConcluido),
-    piqueAt: meta.piqueAt || null,
-    piqueTipo: meta.piqueTipo || null,
-    isTemporaryBatchItem: true,
-    syncPending: false,
-    photo: ''
-  };
-}
-
-async function mergeCloudTemporaryBatchItems(shouldRender = true) {
-  if (!window.VPASupabase?.listTemporaryBatchItems) return;
-  try {
-    const rows = await window.VPASupabase.listTemporaryBatchItems();
-    const remote = rows.map(localProductFromTemporary);
-    const remoteIds = new Set(remote.map((p) => String(p.id)));
-    const localPending = data.products.filter((p) => p.isTemporaryBatchItem && !remoteIds.has(String(p.id)));
-    const official = data.products.filter((p) => !p.isTemporaryBatchItem);
-    data.products = [...official, ...remote, ...localPending];
-    await save();
-    if (shouldRender) render();
-  } catch (error) {
-    console.warn('[VPA] Não foi possível carregar itens temporários das batidas:', error.message || error);
-  }
-}
-
 async function mergeCloudProducts(shouldRender = true) {
   if (!window.VPASupabase?.listProducts) return;
   try {
     const rows = await window.VPASupabase.listProducts();
     // A nuvem é a fonte oficial: não reintroduzir produtos locais ausentes no Supabase.
     // Somente registros presentes na nuvem entram na lista principal após o carregamento.
+    const openBatchIds = new Set(data.batches.filter((batch) => batch.status === 'aberta').map((batch) => String(batch.id)));
+    const localById = new Map(data.products.map((product) => [String(product.id), product]));
     const merged = rows.map((row) => {
-      const local = data.products.find((product) => String(product.id) === String(row.id));
+      const local = localById.get(String(row.id));
       const cloud = localProductFromCloud(row);
       return {
         ...local,
@@ -543,12 +474,20 @@ async function mergeCloudProducts(shouldRender = true) {
         // A nuvem pode não devolver app_metadata; preservar o vínculo local da batida.
         batchId: cloud.batchId || local?.batchId || null,
         origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
-        categoriaCadastro: cloud.categoriaCadastro || local?.categoriaCadastro || 'general',
         syncPending: false,
         photo: local?.photo || ''
       };
     });
-    data.products = merged;
+    // Produtos de uma batida aberta ainda não foram publicados no catálogo geral.
+    // Eles permanecem no IndexedDB para não desaparecerem após uma atualização/sincronização.
+    const mergedIds = new Set(merged.map((product) => String(product.id)));
+    const localDrafts = data.products.filter((product) =>
+      !mergedIds.has(String(product.id)) && (
+        product.syncPending === true ||
+        (product.batchId && openBatchIds.has(String(product.batchId)))
+      )
+    );
+    data.products = [...merged, ...localDrafts];
     await save();
     if (shouldRender) render();
   } catch (error) {
@@ -573,7 +512,6 @@ function mergeCloudProductEvent(payload) {
         // Não perder o vínculo da batida quando o evento remoto não traz app_metadata.
         batchId: cloud.batchId || previous.batchId || null,
         origemCadastro: cloud.origemCadastro || previous.origemCadastro || 'nuvem',
-        categoriaCadastro: cloud.categoriaCadastro || previous.categoriaCadastro || 'general',
         syncPending: false,
         photo: previous.photo || ''
       };
@@ -602,8 +540,7 @@ async function mergeCloudBatidas(shouldRender = true) {
         finishedAt: row.completed_at || local.finishedAt || null,
         status: statusMap[row.status] || local.status || 'aberta',
         cloudId: row.corridor_id,
-        performedBy: row.performed_by || local.performedBy || null,
-        productCount: Number(row.product_count ?? local.productCount ?? 0)
+        performedBy: row.performed_by || local.performedBy || null
       };
       localById.set(String(row.id), merged);
     });
@@ -739,7 +676,6 @@ async function initTeamRealtime() {
     teamRealtimeUserId = session.user.id;
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
-    await mergeCloudTemporaryBatchItems(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
@@ -830,11 +766,10 @@ function render() {
 function openProduct(productId = null, forceManual = false) {
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
-  const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
+  const batch = p?.batchId ? data.batches.find((b) => b.id === p.batchId && b.status === 'aberta') : (forceManual ? null : currentBatch);
   $('corridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $('productForm').reset();
   $('productId').value = p?.id || '';
-  $('productBatchId').value = batch?.id || '';
   $('expiry').value = p?.expiry || today();
   $('quantity').value = p?.quantity || 1;
   $('name').value = p?.name || '';
@@ -913,15 +848,6 @@ async function cancelOpenBatch() {
   const batch = activeBatch();
   if (!batch) return;
   if (!(await askConfirm('Cancelar esta batida?', 'Os produtos registrados nela serão removidos e o corredor não será marcado como conferido.'))) return;
-  try {
-    if (window.VPASupabase?.deleteTemporaryBatchItemsByBatch) {
-      await window.VPASupabase.deleteTemporaryBatchItemsByBatch(batch.id);
-    }
-  } catch (error) {
-    showTeamToast('Não foi possível cancelar os itens temporários no banco. A batida não foi cancelada.', 'warning');
-    console.warn('[VPA] Falha ao excluir itens temporários:', error);
-    return;
-  }
   data.products = data.products.filter((p) => p.batchId !== batch.id);
   batch.status = 'cancelada';
   batch.finishedAt = new Date().toISOString();
@@ -930,50 +856,62 @@ async function cancelOpenBatch() {
   window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
+async function syncFinalizedBatchProducts(batch) {
+  const products = data.products.filter((product) => String(product.batchId || '') === String(batch.id));
+  if (!products.length || !window.VPASupabase?.syncProducts) {
+    return { total: products.length, synced: 0, failed: 0, skipped: true };
+  }
+  const productsWithNumbers = products.map((product) => {
+    const corridor = data.corridors.find((item) => item.id === product.corridorId);
+    return { ...product, corridorNumber: corridor?.number };
+  });
+  const result = await window.VPASupabase.syncProducts(productsWithNumbers);
+  if (result?.synced) {
+    products.forEach((product) => { product.syncPending = false; });
+    await save();
+  }
+  return result;
+}
+
 async function finishBatch() {
   const batch = data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
   if (!batch) return;
-  const batchProducts = data.products.filter((p) => String(p.batchId || '') === String(batch.id));
-  const count = batchProducts.length;
-  if (!count) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
-
-  batch.productCount = count;
-  batch.finishedAt = new Date().toISOString();
-
-  if (window.VPASupabase?.isConfigured?.() && window.VPASupabase?.finalizeBatch) {
-    try {
-      const result = await window.VPASupabase.finalizeBatch(batch.id);
-      batch.productCount = Number(result?.product_count ?? count);
-      batchProducts.forEach((product) => {
-        product.isTemporaryBatchItem = false;
-        product.syncPending = false;
-      });
-    } catch (error) {
-      showTeamToast('⚠️ A batida não foi finalizada: os itens temporários não foram publicados.', 'warning');
-      console.error('[VPA] Falha na finalização transacional da batida:', error);
-      return;
-    }
-  } else {
-    batchProducts.forEach((product) => {
-      product.isTemporaryBatchItem = false;
-      product.syncPending = true;
-    });
-  }
-
+  const batchProducts = data.products.filter((product) => String(product.batchId || '') === String(batch.id));
+  if (!batchProducts.length) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
+  const confirmed = await askConfirm('Finalizar batida?', `A batida será finalizada e ${batchProducts.length} produto(s) serão enviados para a lista geral de produtos.`);
+  if (!confirmed) return;
   batch.status = 'finalizada';
+  batch.finishedAt = new Date().toISOString();
   const c = data.corridors.find((x) => x.id === batch.corridorId);
   if (c) c.lastCheck = today();
   data.activeBatchId = null;
-  batch.syncPending = !window.VPASupabase?.isConfigured?.();
   await save();
 
-  if (!window.VPASupabase?.isConfigured?.()) {
-    window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => {
-      if (result?.synced) { batch.syncPending = false; return save(); }
-    }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  let productSyncMessage = '';
+  try {
+    const result = await syncFinalizedBatchProducts(batch);
+    if (result?.failed) {
+      productSyncMessage = ` ${result.failed} produto(s) permaneceram salvos localmente e precisam de sincronização.`;
+      showTeamToast('⚠️ Batida finalizada.' + productSyncMessage, 'warning');
+    } else if (result?.synced) {
+      showTeamToast(`✅ Batida finalizada. ${result.synced} produto(s) enviados para a lista geral.`, 'success');
+    } else {
+      showTeamToast('✅ Batida finalizada localmente.', 'success');
+    }
+  } catch (error) {
+    console.warn('[VPA] Sincronização dos produtos da batida finalizada falhou:', error.message || error);
+    showTeamToast('⚠️ Batida finalizada localmente. Os produtos ainda não foram confirmados no banco compartilhado.', 'warning');
   }
+
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => {
+    if (result?.synced) {
+      batch.syncPending = false;
+      return save();
+    }
+  }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
+
 async function lookupEAN(ean) {
   const code = String(ean || '').replace(/\D/g, '');
   if (!code) return;
@@ -1287,13 +1225,15 @@ async function syncLocalProductsToCloud() {
     if (status) status.textContent = 'Supabase não configurado nesta versão.';
     return;
   }
-  if (!data.products.length) {
-    if (status) status.textContent = 'Nenhum produto local para sincronizar.';
+  const openBatchIds = new Set(data.batches.filter((batch) => batch.status === 'aberta').map((batch) => String(batch.id)));
+  const eligibleProducts = data.products.filter((product) => !product.batchId || !openBatchIds.has(String(product.batchId)));
+  if (!eligibleProducts.length) {
+    if (status) status.textContent = 'Nenhum produto fora de batida aberta para sincronizar.';
     return;
   }
   if (button) button.disabled = true;
   if (status) status.textContent = 'Sincronizando produtos...';
-  const productsWithNumbers = data.products.map((product) => {
+  const productsWithNumbers = eligibleProducts.map((product) => {
     const corridor = data.corridors.find((item) => item.id === product.corridorId);
     return { ...product, corridorNumber: corridor?.number };
   });
@@ -1332,7 +1272,6 @@ async function autoSyncAllOnLogin(reason = 'login') {
       }
       await mergeCloudProducts();
       await mergeCloudBatidas();
-      await mergeCloudTemporaryBatchItems();
       result.cloudLoaded = true;
       console.info('[VPA] Sincronização automática concluída:', result);
       return result;
@@ -1449,7 +1388,7 @@ function bind() {
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
-  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
+  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
@@ -1526,12 +1465,8 @@ $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
-  const formBatchId = $('productBatchId')?.value || '';
-  const batch = formBatchId
-    ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
-    : (!existing ? activeBatch() : null);
+  const batch = activeBatch();
   const isNew = !existing;
-  const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
   const product = {
     id,
     name: $('name').value.trim(),
@@ -1541,14 +1476,11 @@ $('productForm').addEventListener('submit', async (e) => {
     quantity: Number($('quantity').value),
     status: $('status').value,
     createdAt: existing?.createdAt || new Date().toISOString(),
-    batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
-    origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
+    batchId: existing?.batchId ?? (batch ? batch.id : null),
+    origemCadastro: existing?.origemCadastro || (batch ? 'batida' : 'manual'),
     categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
     photo: $('photoData').value || existing?.photo || '',
     tag: existing?.tag || '',
-    // Regra definitiva: qualquer produto salvo dentro de uma batida aberta
-    // vai exclusivamente para a tabela temporária, nunca para products.
-    isTemporaryBatchItem: isBatchProduct,
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
     promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
@@ -1557,34 +1489,29 @@ $('productForm').addEventListener('submit', async (e) => {
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
-  try {
-    // Nunca use syncProducts para itens vinculados a uma batida aberta.
-    // Se a rotina temporária não estiver disponível, interrompemos o envio
-    // em vez de publicar acidentalmente no catálogo geral.
-    let result;
-    if (product.isTemporaryBatchItem) {
-      if (typeof window.VPASupabase?.syncTemporaryBatchItem !== 'function') {
-        throw new Error('Rotina de salvamento temporário não disponível.');
+  const isOpenBatchProduct = Boolean(batch && String(product.batchId || '') === String(batch.id) && batch.status === 'aberta');
+  if (isOpenBatchProduct) {
+    // Registros da batida ficam locais enquanto ela estiver aberta.
+    // Só serão enviados ao catálogo geral por finishBatch(), após a confirmação.
+    product.syncPending = true;
+    await save();
+    showTeamToast('📝 Produto salvo na lista desta batida. Será enviado ao catálogo geral somente ao finalizar.', 'success');
+  } else {
+    try {
+      const result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+      if (!result || result.failed || result.synced !== 1) {
+        const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
+        showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
+      } else {
+        product.syncPending = false;
+        await save();
+        console.info('[VPA] Produto confirmado no Supabase:', product.id);
+        showTeamToast('☁️ Produto confirmado no banco compartilhado.', 'success');
       }
-      result = await window.VPASupabase.syncTemporaryBatchItem({ ...product, corridorNumber: corridor?.number });
-    } else {
-      result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+    } catch (error) {
+      console.error('[VPA] Sincronização automática do produto falhou:', error);
+      showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
     }
-    const successful = product.isTemporaryBatchItem
-      ? Boolean(result?.id || result?.synced || result?.success)
-      : Boolean(result && !result.failed && result.synced === 1);
-    if (!successful) {
-      const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
-      showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
-    } else {
-      product.syncPending = false;
-      await save();
-      console.info('[VPA] Registro confirmado no Supabase:', product.id);
-      showTeamToast(product.isTemporaryBatchItem ? '☁️ Produto mantido na preparação da batida.' : '☁️ Produto confirmado no banco compartilhado.', 'success');
-    }
-  } catch (error) {
-    console.error('[VPA] Sincronização automática do produto falhou:', error);
-    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
   $('productDialog').close();
   $('corridor').disabled = false;
