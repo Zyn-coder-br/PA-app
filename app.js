@@ -6,7 +6,9 @@ let view = localStorage.getItem('vpa-view') || 'dashboard';
 let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
 let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
-const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
+const sameId = (a, b) => String(a ?? '') === String(b ?? '');
+const findCorridorById = (id) => data.corridors.find((c) => sameId(c.id, id));
+const activeBatch = () => data.batches.find((b) => sameId(b.id, data.activeBatchId) && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random());
@@ -292,7 +294,7 @@ function products() {
 }
 function batches() {
   const active = activeBatch();
-  const activeProducts = active ? data.products.filter((p) => p.batchId === active.id) : [];
+  const activeProducts = active ? data.products.filter((p) => sameId(p.batchId, active.id)) : [];
   const current = batchTab === 'current';
   const history = data.batches.slice().reverse();
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
@@ -786,13 +788,14 @@ function openProduct(productId = null, forceManual = false) {
   $('scanMessage').textContent = '';
   $('lookupMessage').textContent = '';
   const corridorId = p?.corridorId || (batch ? batch.corridorId : data.corridors[0]?.id || '');
+  $('productDialog').dataset.batchId = batch?.id ? String(batch.id) : (p?.batchId ? String(p.batchId) : '');
   $('corridor').value = corridorId;
   $('corridor').disabled = Boolean(batch && !p);
   $('batchContext').textContent = batch && !p ? `Vinculado automaticamente à ${batch.corridorName} · batida em andamento.` : p?.batchId ? 'Produto vinculado a uma batida existente.' : 'Cadastro manual: não será vinculado a uma batida.';
   $('productDialog').showModal();
 }
 function updateBatchPreview() {
-  const corridor = data.corridors.find((c) => c.id === $('batchCorridor').value);
+  const corridor = findCorridorById($('batchCorridor').value);
   $('batchPreviewName').textContent = corridor ? corridor.name : 'Corredor selecionado';
 }
 function openBatch() {
@@ -810,7 +813,7 @@ function openBatch() {
 }
 async function startBatch(event) {
   if (event) event.preventDefault();
-  const corridor = data.corridors.find((c) => c.id === $('batchCorridor').value);
+  const corridor = findCorridorById($('batchCorridor').value);
   if (!corridor) return;
   const alreadyOpen = data.batches.find((b) => b.status === 'aberta');
   if (alreadyOpen) {
@@ -862,7 +865,7 @@ async function syncFinalizedBatchProducts(batch) {
     return { total: products.length, synced: 0, failed: 0, skipped: true };
   }
   const productsWithNumbers = products.map((product) => {
-    const corridor = data.corridors.find((item) => item.id === product.corridorId);
+    const corridor = findCorridorById(product.corridorId);
     return { ...product, corridorNumber: corridor?.number };
   });
   const result = await window.VPASupabase.syncProducts(productsWithNumbers);
@@ -874,41 +877,53 @@ async function syncFinalizedBatchProducts(batch) {
 }
 
 async function finishBatch() {
-  const batch = data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
+  const batch = data.batches.find((b) => sameId(b.id, data.activeBatchId) && b.status === 'aberta');
   if (!batch) return;
-  const batchProducts = data.products.filter((product) => String(product.batchId || '') === String(batch.id));
+  const batchProducts = data.products.filter((product) => sameId(product.batchId, batch.id));
   if (!batchProducts.length) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
   const confirmed = await askConfirm('Finalizar batida?', `A batida será finalizada e ${batchProducts.length} produto(s) serão enviados para a lista geral de produtos.`);
   if (!confirmed) return;
+
+  // Primeiro publica os produtos. Enquanto isso, a batida continua aberta e
+  // os itens permanecem fora da lista geral na interface.
+  let result;
+  try {
+    result = await syncFinalizedBatchProducts(batch);
+  } catch (error) {
+    console.error('[VPA] Falha ao publicar produtos da batida:', error);
+    showTeamToast('⚠️ Não foi possível publicar os produtos. A batida continua aberta para nova tentativa.', 'warning');
+    return;
+  }
+  if (result?.failed) {
+    const detail = result.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
+    showTeamToast(`⚠️ ${result.failed} produto(s) não foram publicados. A batida continua aberta.${detail}`, 'warning');
+    return;
+  }
+
   batch.status = 'finalizada';
   batch.finishedAt = new Date().toISOString();
-  const c = data.corridors.find((x) => x.id === batch.corridorId);
+  const c = findCorridorById(batch.corridorId);
   if (c) c.lastCheck = today();
   data.activeBatchId = null;
   await save();
 
-  let productSyncMessage = '';
   try {
-    const result = await syncFinalizedBatchProducts(batch);
-    if (result?.failed) {
-      productSyncMessage = ` ${result.failed} produto(s) permaneceram salvos localmente e precisam de sincronização.`;
-      showTeamToast('⚠️ Batida finalizada.' + productSyncMessage, 'warning');
-    } else if (result?.synced) {
-      showTeamToast(`✅ Batida finalizada. ${result.synced} produto(s) enviados para a lista geral.`, 'success');
+    const batchResult = await window.VPASupabase?.syncBatches?.([batch], data.corridors);
+    if (batchResult?.failed) {
+      batch.syncPending = true;
+      await save();
+      showTeamToast('⚠️ Batida finalizada localmente, mas ainda não foi confirmada no banco compartilhado.', 'warning');
     } else {
-      showTeamToast('✅ Batida finalizada localmente.', 'success');
+      batch.syncPending = false;
+      await save();
+      showTeamToast(`✅ Batida finalizada. ${result?.synced || batchProducts.length} produto(s) enviados para a lista geral.`, 'success');
     }
   } catch (error) {
-    console.warn('[VPA] Sincronização dos produtos da batida finalizada falhou:', error.message || error);
-    showTeamToast('⚠️ Batida finalizada localmente. Os produtos ainda não foram confirmados no banco compartilhado.', 'warning');
+    batch.syncPending = true;
+    await save();
+    console.warn('[VPA] Sincronização da batida finalizada falhou:', error.message || error);
+    showTeamToast('⚠️ Batida finalizada localmente, mas a batida ainda precisa ser sincronizada.', 'warning');
   }
-
-  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => {
-    if (result?.synced) {
-      batch.syncPending = false;
-      return save();
-    }
-  }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
 
@@ -1084,7 +1099,7 @@ async function importFefoItems() {
   const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
   imported.forEach((product) => data.products.push(product));
   await save();
-  const corridor = data.corridors.find((c) => c.id === corridorId);
+  const corridor = findCorridorById(corridorId);
   try {
     const result = await window.VPASupabase?.syncProducts?.(imported.map((p) => ({ ...p, corridorNumber: corridor?.number })));
     if (result && result.failed) showTeamToast(`⚠️ FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
@@ -1234,7 +1249,7 @@ async function syncLocalProductsToCloud() {
   if (button) button.disabled = true;
   if (status) status.textContent = 'Sincronizando produtos...';
   const productsWithNumbers = eligibleProducts.map((product) => {
-    const corridor = data.corridors.find((item) => item.id === product.corridorId);
+    const corridor = findCorridorById(product.corridorId);
     return { ...product, corridorNumber: corridor?.number };
   });
   try {
@@ -1465,7 +1480,10 @@ $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
-  const batch = activeBatch();
+  const dialogBatchId = $('productDialog')?.dataset.batchId || '';
+  const batch = (dialogBatchId
+    ? data.batches.find((b) => sameId(b.id, dialogBatchId) && b.status === 'aberta')
+    : null) || activeBatch();
   const isNew = !existing;
   const product = {
     id,
@@ -1488,7 +1506,7 @@ $('productForm').addEventListener('submit', async (e) => {
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
-  const corridor = data.corridors.find((c) => c.id === product.corridorId);
+  const corridor = findCorridorById(product.corridorId);
   const isOpenBatchProduct = Boolean(batch && String(product.batchId || '') === String(batch.id) && batch.status === 'aberta');
   if (isOpenBatchProduct) {
     // Registros da batida ficam locais enquanto ela estiver aberta.
