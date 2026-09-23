@@ -1,4 +1,4 @@
-const APP_VERSION = 'V34';
+const APP_VERSION = 'V35';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -177,7 +177,7 @@ function groupedPendingCards(list) {
 function productRow(p, options = {}) {
   const c = data.corridors.find((x) => x.id === p.corridorId);
   const externalPromotor = Boolean(p.externalPromotor);
-  const selected = options.selectable && !externalPromotor ? `<input class="product-check" type="checkbox" data-select-product="${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''} aria-label="Selecionar ${esc(p.name)}">` : '';
+  const selected = options.selectable ? `<input class="product-check" type="checkbox" data-select-product="${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''} aria-label="Selecionar ${esc(p.name)}">` : '';
   const action = options.actions === false || externalPromotor ? '' : `<button class="row-action" data-edit-product="${p.id}" aria-label="Editar produto">›</button>`;
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '';
   const place = externalPromotor ? `Empresa: ${esc(p.company || 'Não informada')} · ${esc(p.location || 'Local não informado')}` : `${esc(c?.name || 'Sem corredor')} · ${esc(p.ean || 'EAN não informado')}`;
