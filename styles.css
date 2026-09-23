@@ -883,3 +883,9 @@ body{
   background: #2a4036 !important;
   color: #e6f0eb !important;
 }
+
+/* V32 - filtro por empresa dos produtos vindos do Promotor PA */
+.company-filter-label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted,#9db5aa);white-space:nowrap}
+.company-filter{min-width:190px;max-width:260px;padding:10px 12px;border:1px solid var(--border,#385148);border-radius:12px;background:var(--panel,#1d2b26);color:var(--text,#f3f7f5)}
+.external-promotor-row{border-left:3px solid #43c58b}
+@media(max-width:760px){.company-filter-label{width:100%;}.company-filter{flex:1;min-width:0;max-width:none}}

@@ -6,9 +6,8 @@ let view = localStorage.getItem('vpa-view') || 'dashboard';
 let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
 let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
-const sameId = (a, b) => String(a ?? '') === String(b ?? '');
-const findCorridorById = (id) => data.corridors.find((c) => sameId(c.id, id));
-const activeBatch = () => data.batches.find((b) => sameId(b.id, data.activeBatchId) && b.status === 'aberta');
+let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') || 'all';
+const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random());
@@ -55,7 +54,7 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
+  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
   const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
@@ -83,15 +82,36 @@ function badge(date) {
 function statusLabel(status) {
   return ({ corredor: 'Ainda no corredor', vencimento: 'Área de vencimento' }[status] || status || 'Ainda no corredor');
 }
+function isProductInOpenBatch(product) {
+  if (!product) return false;
+  const openBatches = data.batches.filter((batch) => batch.status === 'aberta');
+  if (product.batchId) {
+    return openBatches.some((batch) => String(batch.id) === String(product.batchId));
+  }
+  // Fallback de segurança: algumas respostas antigas do Supabase podem não
+  // trazer app_metadata. Nesse caso, preservamos a regra da batida local
+  // usando a origem, o corredor e o horário de início.
+  if (product.origemCadastro !== 'batida') return false;
+  return openBatches.some((batch) => {
+    if (String(batch.corridorId) !== String(product.corridorId)) return false;
+    if (!product.createdAt || !batch.startedAt) return true;
+    return new Date(product.createdAt).getTime() >= new Date(batch.startedAt).getTime();
+  });
+}
 function visibleProducts() {
-  const openIds = new Set(data.batches.filter((b) => b.status === 'aberta').map((b) => String(b.id)));
   return data.products.filter((p) => {
     if (p.piqueConcluido) return false;
-    // Produtos vinculados a uma batida aberta permanecem somente na tela da batida.
-    // A comparação é feita como texto para evitar divergências entre UUID/número.
-    if (p.batchId && openIds.has(String(p.batchId))) return false;
+    // Itens temporários de uma batida nunca entram no catálogo geral.
+    if (p.isTemporaryBatchItem) return false;
+    // Compatibilidade com registros antigos que ainda usam somente o vínculo da batida.
+    if (isProductInOpenBatch(p)) return false;
     return true;
   });
+}
+function loggedDisplayName() {
+  const profile = window.VPA_PROFILE || {};
+  const name = profile.full_name || profile.name || profile.email || 'Usuário';
+  return String(name).trim() || 'Usuário';
 }
 function productImage(p) {
   if (p.photo) return `<img src="${esc(p.photo)}" alt="${esc(p.name || 'Produto')}" loading="lazy">`;
@@ -150,17 +170,22 @@ function groupedPendingCards(list) {
 }
 function productRow(p, options = {}) {
   const c = data.corridors.find((x) => x.id === p.corridorId);
-  const selected = options.selectable ? `<input class="product-check" type="checkbox" data-select-product="${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''} aria-label="Selecionar ${esc(p.name)}">` : '';
-  const action = options.actions === false ? '' : `<button class="row-action" data-edit-product="${p.id}" aria-label="Editar produto">›</button>`;
+  const externalPromotor = Boolean(p.externalPromotor);
+  const selected = options.selectable && !externalPromotor ? `<input class="product-check" type="checkbox" data-select-product="${p.id}" ${selectedProducts.has(p.id) ? 'checked' : ''} aria-label="Selecionar ${esc(p.name)}">` : '';
+  const action = options.actions === false || externalPromotor ? '' : `<button class="row-action" data-edit-product="${p.id}" aria-label="Editar produto">›</button>`;
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '';
-  return `<div class="product-row"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}</div><div class="meta">${esc(c?.name || 'Sem corredor')} · ${esc(p.ean || 'EAN não informado')}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div></div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
+  const place = externalPromotor ? `Empresa: ${esc(p.company || 'Não informada')} · ${esc(p.location || 'Local não informado')}` : `${esc(c?.name || 'Sem corredor')} · ${esc(p.ean || 'EAN não informado')}`;
+  return `<div class="product-row ${externalPromotor ? 'external-promotor-row' : ''}"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}${externalPromotor ? ' <span class="tag-chip">PROMOTOR</span>' : ''}</div><div class="meta">${place}${p.ean ? ' · '+esc(p.ean) : ''}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div></div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
 }
 function suggestedCorridor() {
   return data.corridors.slice().sort((a, b) => {
-    if (!a.lastCheck && !b.lastCheck) return a.number - b.number;
-    if (!a.lastCheck) return -1;
-    if (!b.lastCheck) return 1;
-    return a.lastCheck.localeCompare(b.lastCheck);
+    const daysA = daysWithoutCheck(a);
+    const daysB = daysWithoutCheck(b);
+    const priorityA = daysA === null ? Number.POSITIVE_INFINITY : daysA;
+    const priorityB = daysB === null ? Number.POSITIVE_INFINITY : daysB;
+    // Maior tempo sem batida primeiro; corredores nunca conferidos têm
+    // prioridade máxima. Em empate, mantém a ordem numérica.
+    return priorityB - priorityA || Number(a.number || 0) - Number(b.number || 0);
   })[0] || { number: 1, name: 'Corredor 1', lastCheck: null };
 }
 
@@ -235,7 +260,7 @@ function dashboard() {
   <section class="dashboard-hero">
     <div class="hero-copy">
       <div class="eyebrow hero-eyebrow">VISÃO GERAL</div>
-      <h1>Olá, Ramon! Vamos cuidar das validades?</h1>
+      <h1>Olá, ${esc(loggedDisplayName())}! Vamos cuidar das validades?</h1>
       <p>Organize suas batidas, acompanhe os produtos e mantenha a operação em dia.</p>
     </div>
     <div class="hero-status"><span></span> Sistema ativo</div>
@@ -244,15 +269,21 @@ function dashboard() {
   <div class="panel-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">▦ Batida de hoje</div><div class="panel-sub">${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div></div><span>📅</span></div><button class="primary big-action" id="newBatch">▶ Iniciar Batida <span>›</span></button><button class="secondary soft-action" id="continueBatch">↻ Continuar última batida <span>›</span></button></section>
   <section class="panel"><div class="panel-head"><div class="panel-title">◎ Progresso do mês</div><span class="panel-sub">${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="progress-row"><span>${checked} de ${corridorTotal} corredores</span><strong>${progress}%</strong></div><div class="mini-grid"><div class="mini"><strong>${checked}</strong><span>Concluídos</span></div><div class="mini warning"><strong>${Math.max(0, corridorTotal - checked)}</strong><span>Pendentes</span></div><div class="mini danger"><strong>${data.corridors.filter((c) => c.lastCheck && Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length}</strong><span>Atrasados</span></div></div><div class="goal">🏆 Meta: conferir todos os corredores pelo menos 1 vez a cada 15 dias.</div></section></div>
   <section class="panel" style="margin-top:14px"><div class="panel-head"><div class="panel-title">⌖ Próximo corredor sugerido</div><span class="priority">PRIORIDADE</span><span class="panel-sub">${corridor.lastCheck ? 'Há ' + days + ' dias sem batida' : 'Ainda não conferido'}</span></div><div class="suggested"><div class="suggested-main"><div class="corridor-icon">▥</div><div><strong>${esc(corridor.name)}</strong><small>Prioridade automática pela última conferência</small></div></div><button class="secondary" id="allCorridors">☷ Ver todos</button></div></section>
-  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">R</div><div><div class="product-name">Ramon</div><div class="meta">Pleno 2 · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
+  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">${esc(loggedDisplayName().charAt(0).toUpperCase())}</div><div><div class="product-name">${esc(loggedDisplayName())}</div><div class="meta">${esc(window.VPA_PROFILE?.role || 'Usuário')} · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
 }
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
   const filter = productFilter;
   const allVisible = visibleProducts();
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
-  const list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
+  let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
   const searchValue = localStorage.getItem('vpa-product-search') || '';
+  const promotorCompanies = Array.from(new Set(allVisible.filter((p) => p.promotor && p.company).map((p) => String(p.company).trim()).filter(Boolean))).sort((a,b) => a.localeCompare(b, 'pt-BR'));
+  if (filter === 'promotor' && promotorCompanyFilter !== 'all') list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
+  if (searchValue.trim()) {
+    const q = searchValue.trim().toLowerCase();
+    list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
+  }
   const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
   const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
   const resolved = list.filter((p) => p.status === 'resolvido').length;
@@ -276,6 +307,7 @@ function products() {
       <div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>
       <div class="products-toolbar">
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div>
+        ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
       <div class="list products-list" id="productList">${groupedProductRows(list,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>
@@ -294,7 +326,7 @@ function products() {
 }
 function batches() {
   const active = activeBatch();
-  const activeProducts = active ? data.products.filter((p) => sameId(p.batchId, active.id)) : [];
+  const activeProducts = active ? data.products.filter((p) => String(p.batchId || '') === String(active.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(active.corridorId))) : [];
   const current = batchTab === 'current';
   const history = data.batches.slice().reverse();
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
@@ -403,7 +435,7 @@ function notifyTeamEvent(payload) {
   }
   const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
   const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
-  const productCount = data.products.filter((product) => String(product.batchId || '') === String(row.id)).length;
+  const productCount = Number(row.product_count ?? data.products.filter((product) => String(product.batchId || '') === String(row.id)).length);
   const message = `Batida realizada · ${corridorLabel} · ${productCount} novo${productCount === 1 ? '' : 's'} produto${productCount === 1 ? '' : 's'}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
@@ -438,6 +470,9 @@ function localProductFromCloud(row) {
     id: row.id,
     name: row.name || 'Produto',
     ean: row.ean || '',
+    company: row.company || '',
+    location: row.location || '',
+    photo: row.photo_url || '',
     corridorId: corridor?.id || null,
     corridorNumber: corridor?.number || null,
     expiry: row.expiration_date || '',
@@ -447,8 +482,8 @@ function localProductFromCloud(row) {
     createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || null,
     batchId: meta.batchId || null,
-    origemCadastro: meta.origemCadastro || 'nuvem',
-    categoriaCadastro: meta.categoriaCadastro || (meta.fefo ? 'fefo' : meta.promotor ? 'promotor' : 'general'),
+    origemCadastro: meta.origemCadastro || null,
+    categoriaCadastro: meta.categoriaCadastro || null,
     tag: meta.tag || '',
     fefo: Boolean(meta.fefo),
     promotor: Boolean(meta.promotor),
@@ -459,16 +494,61 @@ function localProductFromCloud(row) {
   };
 }
 
+function localProductFromTemporary(row) {
+  const meta = row.app_metadata && typeof row.app_metadata === 'object' ? row.app_metadata : {};
+  const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
+  const statusMap = { in_corridor: 'corredor', found: 'vencimento', separated: 'separado', resolved: 'resolvido' };
+  return {
+    id: row.id,
+    name: row.name || 'Produto',
+    ean: row.ean || '',
+    corridorId: corridor?.id || null,
+    corridorNumber: corridor?.number || null,
+    expiry: row.expiration_date || '',
+    quantity: Number(row.quantity_found || 0),
+    quantitySeparated: Number(row.quantity_separated || 0),
+    status: statusMap[row.status] || 'corredor',
+    createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || null,
+    batchId: row.batch_id || meta.batchId || null,
+    origemCadastro: meta.origemCadastro || 'batida',
+    categoriaCadastro: meta.categoriaCadastro || 'general',
+    tag: meta.tag || '',
+    fefo: Boolean(meta.fefo),
+    promotor: Boolean(meta.promotor),
+    piqueConcluido: Boolean(meta.piqueConcluido),
+    piqueAt: meta.piqueAt || null,
+    piqueTipo: meta.piqueTipo || null,
+    isTemporaryBatchItem: true,
+    syncPending: false,
+    photo: ''
+  };
+}
+
+async function mergeCloudTemporaryBatchItems(shouldRender = true) {
+  if (!window.VPASupabase?.listTemporaryBatchItems) return;
+  try {
+    const rows = await window.VPASupabase.listTemporaryBatchItems();
+    const remote = rows.map(localProductFromTemporary);
+    const remoteIds = new Set(remote.map((p) => String(p.id)));
+    const localPending = data.products.filter((p) => p.isTemporaryBatchItem && !remoteIds.has(String(p.id)));
+    const official = data.products.filter((p) => !p.isTemporaryBatchItem);
+    data.products = [...official, ...remote, ...localPending];
+    await save();
+    if (shouldRender) render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar itens temporários das batidas:', error.message || error);
+  }
+}
+
 async function mergeCloudProducts(shouldRender = true) {
   if (!window.VPASupabase?.listProducts) return;
   try {
     const rows = await window.VPASupabase.listProducts();
     // A nuvem é a fonte oficial: não reintroduzir produtos locais ausentes no Supabase.
     // Somente registros presentes na nuvem entram na lista principal após o carregamento.
-    const openBatchIds = new Set(data.batches.filter((batch) => batch.status === 'aberta').map((batch) => String(batch.id)));
-    const localById = new Map(data.products.map((product) => [String(product.id), product]));
     const merged = rows.map((row) => {
-      const local = localById.get(String(row.id));
+      const local = data.products.find((product) => String(product.id) === String(row.id));
       const cloud = localProductFromCloud(row);
       return {
         ...local,
@@ -476,24 +556,55 @@ async function mergeCloudProducts(shouldRender = true) {
         // A nuvem pode não devolver app_metadata; preservar o vínculo local da batida.
         batchId: cloud.batchId || local?.batchId || null,
         origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
+        categoriaCadastro: cloud.categoriaCadastro || local?.categoriaCadastro || 'general',
         syncPending: false,
         photo: local?.photo || ''
       };
     });
-    // Produtos de uma batida aberta ainda não foram publicados no catálogo geral.
-    // Eles permanecem no IndexedDB para não desaparecerem após uma atualização/sincronização.
-    const mergedIds = new Set(merged.map((product) => String(product.id)));
-    const localDrafts = data.products.filter((product) =>
-      !mergedIds.has(String(product.id)) && (
-        product.syncPending === true ||
-        (product.batchId && openBatchIds.has(String(product.batchId)))
-      )
-    );
-    data.products = [...merged, ...localDrafts];
+    data.products = merged;
     await save();
     if (shouldRender) render();
   } catch (error) {
     console.warn('[VPA] Não foi possível carregar produtos compartilhados:', error.message || error);
+  }
+}
+
+async function mergeCloudPromotorProducts(shouldRender = true) {
+  if (!window.VPASupabase?.listPromotorProducts) return;
+  try {
+    const rows = await window.VPASupabase.listPromotorProducts();
+    const external = rows.map((row) => ({
+      id: 'promotor:' + row.id,
+      sourceId: row.id,
+      source: 'promotor_pa',
+      externalPromotor: true,
+      name: row.name || 'Produto',
+      ean: row.ean || '',
+      company: row.company || '',
+      location: row.location || '',
+      photo: row.photo_url || '',
+      expiry: row.expiration_date || '',
+      quantity: Number(row.quantity || 0),
+      quantitySeparated: 0,
+      status: row.status === 'concluido' ? 'resolvido' : 'corredor',
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || null,
+      batchId: null,
+      origemCadastro: 'promotor_pa',
+      categoriaCadastro: 'promotor',
+      tag: '',
+      fefo: false,
+      promotor: true,
+      piqueConcluido: false,
+      syncPending: false
+    }));
+    const externalIds = new Set(external.map((p) => String(p.id)));
+    const withoutOldExternal = data.products.filter((p) => !p.externalPromotor);
+    data.products = [...withoutOldExternal, ...external];
+    await save();
+    if (shouldRender) render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar produtos do Promotor PA:', error.message || error);
   }
 }
 
@@ -514,6 +625,7 @@ function mergeCloudProductEvent(payload) {
         // Não perder o vínculo da batida quando o evento remoto não traz app_metadata.
         batchId: cloud.batchId || previous.batchId || null,
         origemCadastro: cloud.origemCadastro || previous.origemCadastro || 'nuvem',
+        categoriaCadastro: cloud.categoriaCadastro || previous.categoriaCadastro || 'general',
         syncPending: false,
         photo: previous.photo || ''
       };
@@ -542,7 +654,8 @@ async function mergeCloudBatidas(shouldRender = true) {
         finishedAt: row.completed_at || local.finishedAt || null,
         status: statusMap[row.status] || local.status || 'aberta',
         cloudId: row.corridor_id,
-        performedBy: row.performed_by || local.performedBy || null
+        performedBy: row.performed_by || local.performedBy || null,
+        productCount: Number(row.product_count ?? local.productCount ?? 0)
       };
       localById.set(String(row.id), merged);
     });
@@ -678,6 +791,8 @@ async function initTeamRealtime() {
     teamRealtimeUserId = session.user.id;
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
+    await mergeCloudTemporaryBatchItems(false);
+    await mergeCloudPromotorProducts(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
@@ -768,10 +883,11 @@ function render() {
 function openProduct(productId = null, forceManual = false) {
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
-  const batch = p?.batchId ? data.batches.find((b) => b.id === p.batchId && b.status === 'aberta') : (forceManual ? null : currentBatch);
+  const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
   $('corridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $('productForm').reset();
   $('productId').value = p?.id || '';
+  $('productBatchId').value = batch?.id || '';
   $('expiry').value = p?.expiry || today();
   $('quantity').value = p?.quantity || 1;
   $('name').value = p?.name || '';
@@ -788,14 +904,13 @@ function openProduct(productId = null, forceManual = false) {
   $('scanMessage').textContent = '';
   $('lookupMessage').textContent = '';
   const corridorId = p?.corridorId || (batch ? batch.corridorId : data.corridors[0]?.id || '');
-  $('productDialog').dataset.batchId = batch?.id ? String(batch.id) : (p?.batchId ? String(p.batchId) : '');
   $('corridor').value = corridorId;
   $('corridor').disabled = Boolean(batch && !p);
   $('batchContext').textContent = batch && !p ? `Vinculado automaticamente à ${batch.corridorName} · batida em andamento.` : p?.batchId ? 'Produto vinculado a uma batida existente.' : 'Cadastro manual: não será vinculado a uma batida.';
   $('productDialog').showModal();
 }
 function updateBatchPreview() {
-  const corridor = findCorridorById($('batchCorridor').value);
+  const corridor = data.corridors.find((c) => c.id === $('batchCorridor').value);
   $('batchPreviewName').textContent = corridor ? corridor.name : 'Corredor selecionado';
 }
 function openBatch() {
@@ -813,7 +928,7 @@ function openBatch() {
 }
 async function startBatch(event) {
   if (event) event.preventDefault();
-  const corridor = findCorridorById($('batchCorridor').value);
+  const corridor = data.corridors.find((c) => c.id === $('batchCorridor').value);
   if (!corridor) return;
   const alreadyOpen = data.batches.find((b) => b.status === 'aberta');
   if (alreadyOpen) {
@@ -851,6 +966,15 @@ async function cancelOpenBatch() {
   const batch = activeBatch();
   if (!batch) return;
   if (!(await askConfirm('Cancelar esta batida?', 'Os produtos registrados nela serão removidos e o corredor não será marcado como conferido.'))) return;
+  try {
+    if (window.VPASupabase?.deleteTemporaryBatchItemsByBatch) {
+      await window.VPASupabase.deleteTemporaryBatchItemsByBatch(batch.id);
+    }
+  } catch (error) {
+    showTeamToast('Não foi possível cancelar os itens temporários no banco. A batida não foi cancelada.', 'warning');
+    console.warn('[VPA] Falha ao excluir itens temporários:', error);
+    return;
+  }
   data.products = data.products.filter((p) => p.batchId !== batch.id);
   batch.status = 'cancelada';
   batch.finishedAt = new Date().toISOString();
@@ -859,74 +983,50 @@ async function cancelOpenBatch() {
   window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   render();
 }
-async function syncFinalizedBatchProducts(batch) {
-  const products = data.products.filter((product) => String(product.batchId || '') === String(batch.id));
-  if (!products.length || !window.VPASupabase?.syncProducts) {
-    return { total: products.length, synced: 0, failed: 0, skipped: true };
-  }
-  const productsWithNumbers = products.map((product) => {
-    const corridor = findCorridorById(product.corridorId);
-    return { ...product, corridorNumber: corridor?.number };
-  });
-  const result = await window.VPASupabase.syncProducts(productsWithNumbers);
-  if (result?.synced) {
-    products.forEach((product) => { product.syncPending = false; });
-    await save();
-  }
-  return result;
-}
-
 async function finishBatch() {
-  const batch = data.batches.find((b) => sameId(b.id, data.activeBatchId) && b.status === 'aberta');
+  const batch = data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
   if (!batch) return;
-  const batchProducts = data.products.filter((product) => sameId(product.batchId, batch.id));
-  if (!batchProducts.length) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
-  const confirmed = await askConfirm('Finalizar batida?', `A batida será finalizada e ${batchProducts.length} produto(s) serão enviados para a lista geral de produtos.`);
-  if (!confirmed) return;
+  const batchProducts = data.products.filter((p) => String(p.batchId || '') === String(batch.id));
+  const count = batchProducts.length;
+  if (!count) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
 
-  // Primeiro publica os produtos. Enquanto isso, a batida continua aberta e
-  // os itens permanecem fora da lista geral na interface.
-  let result;
-  try {
-    result = await syncFinalizedBatchProducts(batch);
-  } catch (error) {
-    console.error('[VPA] Falha ao publicar produtos da batida:', error);
-    showTeamToast('⚠️ Não foi possível publicar os produtos. A batida continua aberta para nova tentativa.', 'warning');
-    return;
-  }
-  if (result?.failed) {
-    const detail = result.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
-    showTeamToast(`⚠️ ${result.failed} produto(s) não foram publicados. A batida continua aberta.${detail}`, 'warning');
-    return;
+  batch.productCount = count;
+  batch.finishedAt = new Date().toISOString();
+
+  if (window.VPASupabase?.isConfigured?.() && window.VPASupabase?.finalizeBatch) {
+    try {
+      const result = await window.VPASupabase.finalizeBatch(batch.id);
+      batch.productCount = Number(result?.product_count ?? count);
+      batchProducts.forEach((product) => {
+        product.isTemporaryBatchItem = false;
+        product.syncPending = false;
+      });
+    } catch (error) {
+      showTeamToast('⚠️ A batida não foi finalizada: os itens temporários não foram publicados.', 'warning');
+      console.error('[VPA] Falha na finalização transacional da batida:', error);
+      return;
+    }
+  } else {
+    batchProducts.forEach((product) => {
+      product.isTemporaryBatchItem = false;
+      product.syncPending = true;
+    });
   }
 
   batch.status = 'finalizada';
-  batch.finishedAt = new Date().toISOString();
-  const c = findCorridorById(batch.corridorId);
+  const c = data.corridors.find((x) => x.id === batch.corridorId);
   if (c) c.lastCheck = today();
   data.activeBatchId = null;
+  batch.syncPending = !window.VPASupabase?.isConfigured?.();
   await save();
 
-  try {
-    const batchResult = await window.VPASupabase?.syncBatches?.([batch], data.corridors);
-    if (batchResult?.failed) {
-      batch.syncPending = true;
-      await save();
-      showTeamToast('⚠️ Batida finalizada localmente, mas ainda não foi confirmada no banco compartilhado.', 'warning');
-    } else {
-      batch.syncPending = false;
-      await save();
-      showTeamToast(`✅ Batida finalizada. ${result?.synced || batchProducts.length} produto(s) enviados para a lista geral.`, 'success');
-    }
-  } catch (error) {
-    batch.syncPending = true;
-    await save();
-    console.warn('[VPA] Sincronização da batida finalizada falhou:', error.message || error);
-    showTeamToast('⚠️ Batida finalizada localmente, mas a batida ainda precisa ser sincronizada.', 'warning');
+  if (!window.VPASupabase?.isConfigured?.()) {
+    window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => {
+      if (result?.synced) { batch.syncPending = false; return save(); }
+    }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
   }
   render();
 }
-
 async function lookupEAN(ean) {
   const code = String(ean || '').replace(/\D/g, '');
   if (!code) return;
@@ -1099,7 +1199,7 @@ async function importFefoItems() {
   const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
   imported.forEach((product) => data.products.push(product));
   await save();
-  const corridor = findCorridorById(corridorId);
+  const corridor = data.corridors.find((c) => c.id === corridorId);
   try {
     const result = await window.VPASupabase?.syncProducts?.(imported.map((p) => ({ ...p, corridorNumber: corridor?.number })));
     if (result && result.failed) showTeamToast(`⚠️ FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
@@ -1240,16 +1340,14 @@ async function syncLocalProductsToCloud() {
     if (status) status.textContent = 'Supabase não configurado nesta versão.';
     return;
   }
-  const openBatchIds = new Set(data.batches.filter((batch) => batch.status === 'aberta').map((batch) => String(batch.id)));
-  const eligibleProducts = data.products.filter((product) => !product.batchId || !openBatchIds.has(String(product.batchId)));
-  if (!eligibleProducts.length) {
-    if (status) status.textContent = 'Nenhum produto fora de batida aberta para sincronizar.';
+  if (!data.products.length) {
+    if (status) status.textContent = 'Nenhum produto local para sincronizar.';
     return;
   }
   if (button) button.disabled = true;
   if (status) status.textContent = 'Sincronizando produtos...';
-  const productsWithNumbers = eligibleProducts.map((product) => {
-    const corridor = findCorridorById(product.corridorId);
+  const productsWithNumbers = data.products.map((product) => {
+    const corridor = data.corridors.find((item) => item.id === product.corridorId);
     return { ...product, corridorNumber: corridor?.number };
   });
   try {
@@ -1287,6 +1385,8 @@ async function autoSyncAllOnLogin(reason = 'login') {
       }
       await mergeCloudProducts();
       await mergeCloudBatidas();
+      await mergeCloudTemporaryBatchItems();
+      await mergeCloudPromotorProducts(false);
       result.cloudLoaded = true;
       console.info('[VPA] Sincronização automática concluída:', result);
       return result;
@@ -1403,7 +1503,7 @@ function bind() {
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
-  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
+  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
@@ -1412,6 +1512,7 @@ function bind() {
     if (filter === 'critical' || filter === 'today') filterProducts($('search')?.value || '', filter);
   }));
   document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); render(); }));
+  $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); render(); });
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
 
   const toggleAllProducts = () => { const ids = visibleProductIdsForCurrentFilter(); const allSelected = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => allSelected ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); };
@@ -1460,7 +1561,7 @@ function bind() {
   $('batchCorridor')?.addEventListener('change', updateBatchPreview);
   $('closeBatchDialog')?.addEventListener('click', () => $('batchDialog').close());
   $('cancelBatch')?.addEventListener('click', () => $('batchDialog').close());
-  $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); filterProducts(e.target.value, 'all'); });
+  $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); render(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
@@ -1480,11 +1581,12 @@ $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
-  const dialogBatchId = $('productDialog')?.dataset.batchId || '';
-  const batch = (dialogBatchId
-    ? data.batches.find((b) => sameId(b.id, dialogBatchId) && b.status === 'aberta')
-    : null) || activeBatch();
+  const formBatchId = $('productBatchId')?.value || '';
+  const batch = formBatchId
+    ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
+    : (!existing ? activeBatch() : null);
   const isNew = !existing;
+  const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
   const product = {
     id,
     name: $('name').value.trim(),
@@ -1494,11 +1596,14 @@ $('productForm').addEventListener('submit', async (e) => {
     quantity: Number($('quantity').value),
     status: $('status').value,
     createdAt: existing?.createdAt || new Date().toISOString(),
-    batchId: existing?.batchId ?? (batch ? batch.id : null),
-    origemCadastro: existing?.origemCadastro || (batch ? 'batida' : 'manual'),
+    batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
+    origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
     categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
     photo: $('photoData').value || existing?.photo || '',
     tag: existing?.tag || '',
+    // Regra definitiva: qualquer produto salvo dentro de uma batida aberta
+    // vai exclusivamente para a tabela temporária, nunca para products.
+    isTemporaryBatchItem: isBatchProduct,
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
     promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
@@ -1506,30 +1611,35 @@ $('productForm').addEventListener('submit', async (e) => {
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
-  const corridor = findCorridorById(product.corridorId);
-  const isOpenBatchProduct = Boolean(batch && String(product.batchId || '') === String(batch.id) && batch.status === 'aberta');
-  if (isOpenBatchProduct) {
-    // Registros da batida ficam locais enquanto ela estiver aberta.
-    // Só serão enviados ao catálogo geral por finishBatch(), após a confirmação.
-    product.syncPending = true;
-    await save();
-    showTeamToast('📝 Produto salvo na lista desta batida. Será enviado ao catálogo geral somente ao finalizar.', 'success');
-  } else {
-    try {
-      const result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
-      if (!result || result.failed || result.synced !== 1) {
-        const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
-        showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
-      } else {
-        product.syncPending = false;
-        await save();
-        console.info('[VPA] Produto confirmado no Supabase:', product.id);
-        showTeamToast('☁️ Produto confirmado no banco compartilhado.', 'success');
+  const corridor = data.corridors.find((c) => c.id === product.corridorId);
+  try {
+    // Nunca use syncProducts para itens vinculados a uma batida aberta.
+    // Se a rotina temporária não estiver disponível, interrompemos o envio
+    // em vez de publicar acidentalmente no catálogo geral.
+    let result;
+    if (product.isTemporaryBatchItem) {
+      if (typeof window.VPASupabase?.syncTemporaryBatchItem !== 'function') {
+        throw new Error('Rotina de salvamento temporário não disponível.');
       }
-    } catch (error) {
-      console.error('[VPA] Sincronização automática do produto falhou:', error);
-      showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+      result = await window.VPASupabase.syncTemporaryBatchItem({ ...product, corridorNumber: corridor?.number });
+    } else {
+      result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
     }
+    const successful = product.isTemporaryBatchItem
+      ? Boolean(result?.id || result?.synced || result?.success)
+      : Boolean(result && !result.failed && result.synced === 1);
+    if (!successful) {
+      const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
+      showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
+    } else {
+      product.syncPending = false;
+      await save();
+      console.info('[VPA] Registro confirmado no Supabase:', product.id);
+      showTeamToast(product.isTemporaryBatchItem ? '☁️ Produto mantido na preparação da batida.' : '☁️ Produto confirmado no banco compartilhado.', 'success');
+    }
+  } catch (error) {
+    console.error('[VPA] Sincronização automática do produto falhou:', error);
+    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
   $('productDialog').close();
   $('corridor').disabled = false;
