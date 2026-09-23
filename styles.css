@@ -659,3 +659,9 @@ body{
 .compact-notification-panel{padding:14px 18px!important}
 .compact-notification-panel .toolbar{margin:9px 0 5px}
 :root[data-theme="dark"] .floating-nav-footer .nav-logout-item:hover{background:#4a2928}
+
+.excel-import-table{display:grid;gap:6px;overflow:auto;max-height:42vh;margin-top:10px}
+.excel-import-head,.excel-import-row{display:grid;grid-template-columns:70px 90px minmax(180px,1fr) 80px 120px;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--line,#ddd);font-size:.86rem}
+.excel-import-head{font-weight:700;position:sticky;top:0;background:var(--card,#fff);z-index:1}
+.excel-import-row{cursor:pointer}
+.excel-import-row input{width:18px;height:18px}

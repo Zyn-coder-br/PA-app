@@ -367,16 +367,24 @@ function notifyTeamEvent(payload) {
   const row = payload?.new || payload?.record || {};
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
   if (!row.id || row.performed_by === teamRealtimeUserId) return;
+  // Uma batida deve gerar somente um aviso quando for concluída.
+  // INSERT/UPDATE intermediários não geram notificações para evitar spam.
+  if (row.status !== 'completed' || !['INSERT', 'UPDATE'].includes(String(eventType).toUpperCase())) return;
   const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
   const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
-  const statusLabel = row.status === 'completed' ? 'concluiu' : row.status === 'cancelled' ? 'cancelou' : 'iniciou/atualizou';
-  const message = `Equipe: alguém ${statusLabel} uma batida no ${corridorLabel}.`;
+  const productCount = data.products.filter((product) => String(product.batchId || '') === String(row.id)).length;
+  const message = `Batida realizada · ${corridorLabel} · ${productCount} novo${productCount === 1 ? '' : 's'} produto${productCount === 1 ? '' : 's'}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
-  showRealtimeNotification('Vencimento PA · Equipe', message, 'vpa-team-' + row.id);
+  showRealtimeNotification('Vencimento PA · Batida finalizada', message, 'vpa-team-completed-' + row.id);
 }
 
 const recentProductEvents = new Map();
+let realtimeRenderTimer = null;
+function scheduleRealtimeRender() {
+  window.clearTimeout(realtimeRenderTimer);
+  realtimeRenderTimer = window.setTimeout(() => { realtimeRenderTimer = null; render(); }, 250);
+}
 function notifyProductEvent(payload) {
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
   const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
@@ -386,17 +394,8 @@ function notifyProductEvent(payload) {
   for (const [key, time] of recentProductEvents.entries()) if (now - time > 15000) recentProductEvents.delete(key);
   if (recentProductEvents.has(eventFingerprint)) return;
   recentProductEvents.set(eventFingerprint, now);
+  // Produtos continuam sendo sincronizados, mas não geram uma notificação individual.
   mergeCloudProductEvent(payload);
-  if (row.registered_by === teamRealtimeUserId) return;
-  const name = row.name || 'Produto';
-  const expiry = row.expiration_date ? ` · vence em ${row.expiration_date}` : '';
-  let action = eventType === 'INSERT' ? 'foi cadastrado' : eventType === 'DELETE' ? 'foi removido' : 'foi atualizado';
-  const old = payload?.old || {};
-  if (eventType === 'UPDATE' && old.status !== row.status && old.status !== undefined) action = `mudou de status para ${row.status || 'atualizado'}`;
-  const message = `Equipe: ${name} ${action}${expiry}.`;
-  teamNotificationCount += 1;
-  showTeamToast('🔔 ' + message, 'team');
-  showRealtimeNotification('Vencimento PA · Produto', message, 'vpa-product-' + row.id + '-' + eventType + '-' + (row.updated_at || row.created_at || ''));
 }
 
 function localProductFromCloud(row) {
@@ -459,7 +458,7 @@ function mergeCloudProductEvent(payload) {
     if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, syncPending: false, photo: data.products[index].photo || '' };
     else data.products.push({ ...cloud, syncPending: false });
   }
-  save().then(() => render()).catch((error) => console.warn('[VPA] Falha ao salvar produto compartilhado:', error));
+  save().then(() => scheduleRealtimeRender()).catch((error) => console.warn('[VPA] Falha ao salvar produto compartilhado:', error));
 }
 
 async function mergeCloudBatidas() {
@@ -991,6 +990,91 @@ async function importFefoItems() {
   }
   $('fefoScannerDialog').close(); $('productDialog').close(); render();
 }
+
+let excelFefoItems = [];
+function openExcelFefoImport() {
+  excelFefoItems = [];
+  $('excelFefoInput').value = '';
+  $('excelFefoStatus').textContent = '';
+  $('excelFefoResults').innerHTML = '<div class="empty">Selecione uma planilha para visualizar os produtos.</div>';
+  $('confirmExcelFefo').disabled = true;
+  $('excelFefoDialog').showModal();
+}
+function normalizeExcelDate(value) {
+  if (value instanceof Date && !isNaN(value)) return value.toISOString().slice(0,10);
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  let m = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (m) { let y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
+  if (/^\d+(\.\d+)?$/.test(raw) && window.XLSX?.SSF) {
+    const parsed = XLSX.SSF.parse_date_code(Number(raw));
+    if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2,'0')}-${String(parsed.d).padStart(2,'0')}`;
+  }
+  return raw;
+}
+function renderExcelFefoItems() {
+  const valid = excelFefoItems.filter(x => x.selected);
+  $('excelFefoResults').innerHTML = excelFefoItems.length
+    ? `<div class="fefo-ocr-note">${excelFefoItems.length} produto(s) encontrado(s). Confira os dados e desmarque o que não deseja importar.</div>
+      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU</span><span>Produto</span><span>Estoque</span><span>Vencimento</span></div>
+      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu)}</span><span>${esc(it.name)}</span><span>${esc(it.quantity)}</span><span>${esc(it.expiry)}</span></label>`).join('')}</div>`
+    : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
+  $('confirmExcelFefo').disabled = !valid.length;
+  document.querySelectorAll('[data-excel-index]').forEach(el => el.addEventListener('change', () => {
+    excelFefoItems[Number(el.dataset.excelIndex)].selected = el.checked;
+    $('confirmExcelFefo').disabled = !excelFefoItems.some(x => x.selected);
+  }));
+}
+async function readExcelFefoFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!window.XLSX) { $('excelFefoStatus').textContent = 'Leitor Excel não carregado. Verifique a internet.'; return; }
+  $('excelFefoStatus').textContent = 'Lendo planilha...';
+  $('confirmExcelFefo').disabled = true;
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type:'array', cellDates:true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval:'', raw:true });
+    excelFefoItems = rows.map((row, index) => {
+      const keys = Object.keys(row);
+      const get = (name) => row[keys.find(k => String(k).trim().toUpperCase() === name)] ?? '';
+      const name = String(get('DESCRICAO') || get('DESCRIÇÃO') || get('PRODUTO') || '').trim();
+      const plu = String(get('PLU') || '').trim();
+      const quantity = String(get('ESTOQUE') || get('QUANTIDADE') || '1').trim();
+      const expiry = normalizeExcelDate(get('DATA VENCIMENTO') || get('VENCIMENTO') || get('VALIDADE'));
+      return { id:uid(), plu, name, quantity, expiry, selected:Boolean(name && expiry), row:index+2 };
+    }).filter(x => x.name && x.expiry);
+    renderExcelFefoItems();
+    $('excelFefoStatus').textContent = `${excelFefoItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
+  } catch (error) {
+    console.error('[VPA] Falha ao ler Excel:', error);
+    $('excelFefoStatus').textContent = 'Não foi possível ler a planilha. Confira o formato do arquivo.';
+    excelFefoItems = [];
+    renderExcelFefoItems();
+  }
+}
+async function confirmExcelFefoImport() {
+  const selected = excelFefoItems.filter(x => x.selected && x.name && x.expiry);
+  if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
+  const corridorId = data.corridors[0]?.id || '';
+  const corridor = data.corridors.find(c => c.id === corridorId);
+  const imported = selected.map(it => ({ id:uid(), name:it.name, ean:'', plu:it.plu, storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity)||1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'planilha-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  imported.forEach(p => data.products.push(p));
+  await save();
+  try {
+    const result = await window.VPASupabase?.syncProducts?.(imported.map(p => ({...p, corridorNumber:corridor?.number})));
+    if (result?.failed) showTeamToast(`⚠️ ${result.failed} item(ns) ficaram salvos localmente e não foram enviados.`, 'warning');
+    else if (result?.synced) { imported.forEach(p => p.syncPending=false); await save(); showTeamToast(`☁️ ${result.synced} produto(s) importado(s) para o banco compartilhado.`, 'success'); }
+    else showTeamToast('✅ Produtos importados localmente.', 'success');
+  } catch (error) {
+    console.warn('[VPA] Sincronização da planilha falhou:', error);
+    showTeamToast('⚠️ Produtos salvos localmente, mas não enviados ao Supabase.', 'warning');
+  }
+  $('excelFefoDialog').close();
+  render();
+}
+
 let piquePhotoData = '';
 let piqueProductId = null;
 function openPiqueDialog(productId) {
@@ -1165,6 +1249,11 @@ function bind() {
   $('piquePhotoInput')?.addEventListener('change', bindPiquePhoto);
   $('confirmPiqueBtn')?.addEventListener('click', confirmPique);
   $('openFefoScanner')?.addEventListener('click', openFefoScanner);
+  $('openExcelFefoImport')?.addEventListener('click', openExcelFefoImport);
+  $('closeExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
+  $('cancelExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
+  $('excelFefoInput')?.addEventListener('change', readExcelFefoFile);
+  $('confirmExcelFefo')?.addEventListener('click', confirmExcelFefoImport);
   $('closeFefoScanner')?.addEventListener('click', () => $('fefoScannerDialog').close());
   $('cancelFefoImport')?.addEventListener('click', () => $('fefoScannerDialog').close());
   $('runFefoOcr')?.addEventListener('click', runFefoOcr);
