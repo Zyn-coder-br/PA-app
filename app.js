@@ -81,15 +81,34 @@ function badge(date) {
 function statusLabel(status) {
   return ({ corredor: 'Ainda no corredor', vencimento: 'Área de vencimento' }[status] || status || 'Ainda no corredor');
 }
+function isProductInOpenBatch(product) {
+  if (!product) return false;
+  const openBatches = data.batches.filter((batch) => batch.status === 'aberta');
+  if (product.batchId) {
+    return openBatches.some((batch) => String(batch.id) === String(product.batchId));
+  }
+  // Fallback de segurança: algumas respostas antigas do Supabase podem não
+  // trazer app_metadata. Nesse caso, preservamos a regra da batida local
+  // usando a origem, o corredor e o horário de início.
+  if (product.origemCadastro !== 'batida') return false;
+  return openBatches.some((batch) => {
+    if (String(batch.corridorId) !== String(product.corridorId)) return false;
+    if (!product.createdAt || !batch.startedAt) return true;
+    return new Date(product.createdAt).getTime() >= new Date(batch.startedAt).getTime();
+  });
+}
 function visibleProducts() {
-  const openIds = new Set(data.batches.filter((b) => b.status === 'aberta').map((b) => String(b.id)));
   return data.products.filter((p) => {
     if (p.piqueConcluido) return false;
-    // Produtos vinculados a uma batida aberta permanecem somente na tela da batida.
-    // A comparação é feita como texto para evitar divergências entre UUID/número.
-    if (p.batchId && openIds.has(String(p.batchId))) return false;
+    // Produtos de uma batida aberta ficam exclusivamente dentro da batida.
+    if (isProductInOpenBatch(p)) return false;
     return true;
   });
+}
+function loggedDisplayName() {
+  const profile = window.VPA_PROFILE || {};
+  const name = profile.full_name || profile.name || profile.email || 'Usuário';
+  return String(name).trim() || 'Usuário';
 }
 function productImage(p) {
   if (p.photo) return `<img src="${esc(p.photo)}" alt="${esc(p.name || 'Produto')}" loading="lazy">`;
@@ -155,10 +174,13 @@ function productRow(p, options = {}) {
 }
 function suggestedCorridor() {
   return data.corridors.slice().sort((a, b) => {
-    if (!a.lastCheck && !b.lastCheck) return a.number - b.number;
-    if (!a.lastCheck) return -1;
-    if (!b.lastCheck) return 1;
-    return a.lastCheck.localeCompare(b.lastCheck);
+    const daysA = daysWithoutCheck(a);
+    const daysB = daysWithoutCheck(b);
+    const priorityA = daysA === null ? Number.POSITIVE_INFINITY : daysA;
+    const priorityB = daysB === null ? Number.POSITIVE_INFINITY : daysB;
+    // Maior tempo sem batida primeiro; corredores nunca conferidos têm
+    // prioridade máxima. Em empate, mantém a ordem numérica.
+    return priorityB - priorityA || Number(a.number || 0) - Number(b.number || 0);
   })[0] || { number: 1, name: 'Corredor 1', lastCheck: null };
 }
 
@@ -233,7 +255,7 @@ function dashboard() {
   <section class="dashboard-hero">
     <div class="hero-copy">
       <div class="eyebrow hero-eyebrow">VISÃO GERAL</div>
-      <h1>Olá, Ramon! Vamos cuidar das validades?</h1>
+      <h1>Olá, ${esc(loggedDisplayName())}! Vamos cuidar das validades?</h1>
       <p>Organize suas batidas, acompanhe os produtos e mantenha a operação em dia.</p>
     </div>
     <div class="hero-status"><span></span> Sistema ativo</div>
@@ -242,7 +264,7 @@ function dashboard() {
   <div class="panel-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">▦ Batida de hoje</div><div class="panel-sub">${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div></div><span>📅</span></div><button class="primary big-action" id="newBatch">▶ Iniciar Batida <span>›</span></button><button class="secondary soft-action" id="continueBatch">↻ Continuar última batida <span>›</span></button></section>
   <section class="panel"><div class="panel-head"><div class="panel-title">◎ Progresso do mês</div><span class="panel-sub">${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="progress-row"><span>${checked} de ${corridorTotal} corredores</span><strong>${progress}%</strong></div><div class="mini-grid"><div class="mini"><strong>${checked}</strong><span>Concluídos</span></div><div class="mini warning"><strong>${Math.max(0, corridorTotal - checked)}</strong><span>Pendentes</span></div><div class="mini danger"><strong>${data.corridors.filter((c) => c.lastCheck && Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length}</strong><span>Atrasados</span></div></div><div class="goal">🏆 Meta: conferir todos os corredores pelo menos 1 vez a cada 15 dias.</div></section></div>
   <section class="panel" style="margin-top:14px"><div class="panel-head"><div class="panel-title">⌖ Próximo corredor sugerido</div><span class="priority">PRIORIDADE</span><span class="panel-sub">${corridor.lastCheck ? 'Há ' + days + ' dias sem batida' : 'Ainda não conferido'}</span></div><div class="suggested"><div class="suggested-main"><div class="corridor-icon">▥</div><div><strong>${esc(corridor.name)}</strong><small>Prioridade automática pela última conferência</small></div></div><button class="secondary" id="allCorridors">☷ Ver todos</button></div></section>
-  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">R</div><div><div class="product-name">Ramon</div><div class="meta">Pleno 2 · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
+  <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">${esc(loggedDisplayName().charAt(0).toUpperCase())}</div><div><div class="product-name">${esc(loggedDisplayName())}</div><div class="meta">${esc(window.VPA_PROFILE?.role || 'Usuário')} · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
 }
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
@@ -292,7 +314,7 @@ function products() {
 }
 function batches() {
   const active = activeBatch();
-  const activeProducts = active ? data.products.filter((p) => p.batchId === active.id) : [];
+  const activeProducts = active ? data.products.filter((p) => String(p.batchId || '') === String(active.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(active.corridorId))) : [];
   const current = batchTab === 'current';
   const history = data.batches.slice().reverse();
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
@@ -445,8 +467,8 @@ function localProductFromCloud(row) {
     createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || null,
     batchId: meta.batchId || null,
-    origemCadastro: meta.origemCadastro || 'nuvem',
-    categoriaCadastro: meta.categoriaCadastro || (meta.fefo ? 'fefo' : meta.promotor ? 'promotor' : 'general'),
+    origemCadastro: meta.origemCadastro || null,
+    categoriaCadastro: meta.categoriaCadastro || null,
     tag: meta.tag || '',
     fefo: Boolean(meta.fefo),
     promotor: Boolean(meta.promotor),
@@ -472,6 +494,7 @@ async function mergeCloudProducts(shouldRender = true) {
         // A nuvem pode não devolver app_metadata; preservar o vínculo local da batida.
         batchId: cloud.batchId || local?.batchId || null,
         origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
+        categoriaCadastro: cloud.categoriaCadastro || local?.categoriaCadastro || 'general',
         syncPending: false,
         photo: local?.photo || ''
       };
@@ -501,6 +524,7 @@ function mergeCloudProductEvent(payload) {
         // Não perder o vínculo da batida quando o evento remoto não traz app_metadata.
         batchId: cloud.batchId || previous.batchId || null,
         origemCadastro: cloud.origemCadastro || previous.origemCadastro || 'nuvem',
+        categoriaCadastro: cloud.categoriaCadastro || previous.categoriaCadastro || 'general',
         syncPending: false,
         photo: previous.photo || ''
       };
@@ -848,7 +872,7 @@ async function cancelOpenBatch() {
 async function finishBatch() {
   const batch = data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
   if (!batch) return;
-  const count = data.products.filter((p) => p.batchId === batch.id).length;
+  const count = data.products.filter((p) => String(p.batchId || '') === String(batch.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(batch.corridorId))).length;
   if (!count) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
   batch.status = 'finalizada';
   batch.finishedAt = new Date().toISOString();
