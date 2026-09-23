@@ -262,6 +262,7 @@ function products() {
         <h2>Controle de produtos</h2>
         <p>Consulte, organize e acompanhe os produtos registrados na operação.</p>
       </div>
+      <button type="button" class="products-hero-action" id="newProduct"><span>＋</span> Adicionar produto</button>
     </div>
     <div class="products-overview">
       <div class="product-stat-card"><div class="product-stat-icon green">▦</div><div><strong>${list.length}</strong><span>Produtos na lista</span></div></div>
@@ -280,7 +281,6 @@ function products() {
       <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
         <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">☷</button>
         <div class="bulk-actions-menu" id="bulkActionsMenu" hidden>
-          <button type="button" class="primary" id="newProduct">＋ Adicionar produto</button>
           <button type="button" class="secondary" id="floatingSelectAll">☑ Marcar/desmarcar tudo</button>
           <button type="button" class="secondary" id="floatingBulkStatus">↔ Alterar status</button>
           <button type="button" class="secondary" id="floatingQuickTag">🏷 Adicionar tag</button>
