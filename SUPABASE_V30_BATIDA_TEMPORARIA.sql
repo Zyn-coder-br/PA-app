@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.batida_itens_temporarios (
   batch_id uuid NOT NULL REFERENCES public.batidas(id) ON DELETE CASCADE,
   name text NOT NULL,
   ean text,
-  corridor_id uuid NOT NULL REFERENCES public.corridors(id),
+  corridor_id bigint NOT NULL REFERENCES public.corridors(id),
   quantity_found numeric NOT NULL DEFAULT 0,
   quantity_separated numeric NOT NULL DEFAULT 0,
   expiration_date date,

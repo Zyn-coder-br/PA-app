@@ -830,10 +830,11 @@ function render() {
 function openProduct(productId = null, forceManual = false) {
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
-  const batch = p?.batchId ? data.batches.find((b) => b.id === p.batchId && b.status === 'aberta') : (forceManual ? null : currentBatch);
+  const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
   $('corridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $('productForm').reset();
   $('productId').value = p?.id || '';
+  $('productBatchId').value = batch?.id || '';
   $('expiry').value = p?.expiry || today();
   $('quantity').value = p?.quantity || 1;
   $('name').value = p?.name || '';
@@ -1525,8 +1526,12 @@ $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
-  const batch = activeBatch();
+  const formBatchId = $('productBatchId')?.value || '';
+  const batch = formBatchId
+    ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
+    : (!existing ? activeBatch() : null);
   const isNew = !existing;
+  const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
   const product = {
     id,
     name: $('name').value.trim(),
@@ -1536,12 +1541,14 @@ $('productForm').addEventListener('submit', async (e) => {
     quantity: Number($('quantity').value),
     status: $('status').value,
     createdAt: existing?.createdAt || new Date().toISOString(),
-    batchId: existing?.batchId ?? (batch ? batch.id : null),
-    origemCadastro: existing?.origemCadastro || (batch ? 'batida' : 'manual'),
+    batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
+    origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
     categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
     photo: $('photoData').value || existing?.photo || '',
     tag: existing?.tag || '',
-    isTemporaryBatchItem: Boolean(batch && (isNew || existing?.isTemporaryBatchItem || existing?.batchId)),
+    // Regra definitiva: qualquer produto salvo dentro de uma batida aberta
+    // vai exclusivamente para a tabela temporária, nunca para products.
+    isTemporaryBatchItem: isBatchProduct,
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
     promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
@@ -1551,9 +1558,18 @@ $('productForm').addEventListener('submit', async (e) => {
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
-    const result = product.isTemporaryBatchItem
-      ? await window.VPASupabase?.syncTemporaryBatchItem?.({ ...product, corridorNumber: corridor?.number })
-      : await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+    // Nunca use syncProducts para itens vinculados a uma batida aberta.
+    // Se a rotina temporária não estiver disponível, interrompemos o envio
+    // em vez de publicar acidentalmente no catálogo geral.
+    let result;
+    if (product.isTemporaryBatchItem) {
+      if (typeof window.VPASupabase?.syncTemporaryBatchItem !== 'function') {
+        throw new Error('Rotina de salvamento temporário não disponível.');
+      }
+      result = await window.VPASupabase.syncTemporaryBatchItem({ ...product, corridorNumber: corridor?.number });
+    } else {
+      result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+    }
     const successful = product.isTemporaryBatchItem
       ? Boolean(result?.id || result?.synced || result?.success)
       : Boolean(result && !result.failed && result.synced === 1);
