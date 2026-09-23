@@ -53,7 +53,7 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null }));
+  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
   const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
@@ -100,7 +100,9 @@ function isProductInOpenBatch(product) {
 function visibleProducts() {
   return data.products.filter((p) => {
     if (p.piqueConcluido) return false;
-    // Produtos de uma batida aberta ficam exclusivamente dentro da batida.
+    // Itens temporários de uma batida nunca entram no catálogo geral.
+    if (p.isTemporaryBatchItem) return false;
+    // Compatibilidade com registros antigos que ainda usam somente o vínculo da batida.
     if (isProductInOpenBatch(p)) return false;
     return true;
   });
@@ -423,7 +425,7 @@ function notifyTeamEvent(payload) {
   }
   const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
   const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
-  const productCount = data.products.filter((product) => String(product.batchId || '') === String(row.id)).length;
+  const productCount = Number(row.product_count ?? data.products.filter((product) => String(product.batchId || '') === String(row.id)).length);
   const message = `Batida realizada · ${corridorLabel} · ${productCount} novo${productCount === 1 ? '' : 's'} produto${productCount === 1 ? '' : 's'}.`;
   teamNotificationCount += 1;
   showTeamToast('🔔 ' + message, 'team');
@@ -477,6 +479,53 @@ function localProductFromCloud(row) {
     piqueTipo: meta.piqueTipo || null,
     cloudRegisteredBy: row.registered_by || null
   };
+}
+
+function localProductFromTemporary(row) {
+  const meta = row.app_metadata && typeof row.app_metadata === 'object' ? row.app_metadata : {};
+  const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
+  const statusMap = { in_corridor: 'corredor', found: 'vencimento', separated: 'separado', resolved: 'resolvido' };
+  return {
+    id: row.id,
+    name: row.name || 'Produto',
+    ean: row.ean || '',
+    corridorId: corridor?.id || null,
+    corridorNumber: corridor?.number || null,
+    expiry: row.expiration_date || '',
+    quantity: Number(row.quantity_found || 0),
+    quantitySeparated: Number(row.quantity_separated || 0),
+    status: statusMap[row.status] || 'corredor',
+    createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || null,
+    batchId: row.batch_id || meta.batchId || null,
+    origemCadastro: meta.origemCadastro || 'batida',
+    categoriaCadastro: meta.categoriaCadastro || 'general',
+    tag: meta.tag || '',
+    fefo: Boolean(meta.fefo),
+    promotor: Boolean(meta.promotor),
+    piqueConcluido: Boolean(meta.piqueConcluido),
+    piqueAt: meta.piqueAt || null,
+    piqueTipo: meta.piqueTipo || null,
+    isTemporaryBatchItem: true,
+    syncPending: false,
+    photo: ''
+  };
+}
+
+async function mergeCloudTemporaryBatchItems(shouldRender = true) {
+  if (!window.VPASupabase?.listTemporaryBatchItems) return;
+  try {
+    const rows = await window.VPASupabase.listTemporaryBatchItems();
+    const remote = rows.map(localProductFromTemporary);
+    const remoteIds = new Set(remote.map((p) => String(p.id)));
+    const localPending = data.products.filter((p) => p.isTemporaryBatchItem && !remoteIds.has(String(p.id)));
+    const official = data.products.filter((p) => !p.isTemporaryBatchItem);
+    data.products = [...official, ...remote, ...localPending];
+    await save();
+    if (shouldRender) render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar itens temporários das batidas:', error.message || error);
+  }
 }
 
 async function mergeCloudProducts(shouldRender = true) {
@@ -553,7 +602,8 @@ async function mergeCloudBatidas(shouldRender = true) {
         finishedAt: row.completed_at || local.finishedAt || null,
         status: statusMap[row.status] || local.status || 'aberta',
         cloudId: row.corridor_id,
-        performedBy: row.performed_by || local.performedBy || null
+        performedBy: row.performed_by || local.performedBy || null,
+        productCount: Number(row.product_count ?? local.productCount ?? 0)
       };
       localById.set(String(row.id), merged);
     });
@@ -689,6 +739,7 @@ async function initTeamRealtime() {
     teamRealtimeUserId = session.user.id;
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
+    await mergeCloudTemporaryBatchItems(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
@@ -861,6 +912,15 @@ async function cancelOpenBatch() {
   const batch = activeBatch();
   if (!batch) return;
   if (!(await askConfirm('Cancelar esta batida?', 'Os produtos registrados nela serão removidos e o corredor não será marcado como conferido.'))) return;
+  try {
+    if (window.VPASupabase?.deleteTemporaryBatchItemsByBatch) {
+      await window.VPASupabase.deleteTemporaryBatchItemsByBatch(batch.id);
+    }
+  } catch (error) {
+    showTeamToast('Não foi possível cancelar os itens temporários no banco. A batida não foi cancelada.', 'warning');
+    console.warn('[VPA] Falha ao excluir itens temporários:', error);
+    return;
+  }
   data.products = data.products.filter((p) => p.batchId !== batch.id);
   batch.status = 'cancelada';
   batch.finishedAt = new Date().toISOString();
@@ -872,13 +932,45 @@ async function cancelOpenBatch() {
 async function finishBatch() {
   const batch = data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
   if (!batch) return;
-  const count = data.products.filter((p) => String(p.batchId || '') === String(batch.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(batch.corridorId))).length;
+  const batchProducts = data.products.filter((p) => String(p.batchId || '') === String(batch.id));
+  const count = batchProducts.length;
   if (!count) { alert('Cadastre pelo menos um produto antes de finalizar a batida.'); return; }
-  batch.status = 'finalizada';
+
+  batch.productCount = count;
   batch.finishedAt = new Date().toISOString();
-  const c = data.corridors.find((x) => x.id === batch.corridorId); if (c) c.lastCheck = today();
-  data.activeBatchId = null; await save();
-  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+
+  if (window.VPASupabase?.isConfigured?.() && window.VPASupabase?.finalizeBatch) {
+    try {
+      const result = await window.VPASupabase.finalizeBatch(batch.id);
+      batch.productCount = Number(result?.product_count ?? count);
+      batchProducts.forEach((product) => {
+        product.isTemporaryBatchItem = false;
+        product.syncPending = false;
+      });
+    } catch (error) {
+      showTeamToast('⚠️ A batida não foi finalizada: os itens temporários não foram publicados.', 'warning');
+      console.error('[VPA] Falha na finalização transacional da batida:', error);
+      return;
+    }
+  } else {
+    batchProducts.forEach((product) => {
+      product.isTemporaryBatchItem = false;
+      product.syncPending = true;
+    });
+  }
+
+  batch.status = 'finalizada';
+  const c = data.corridors.find((x) => x.id === batch.corridorId);
+  if (c) c.lastCheck = today();
+  data.activeBatchId = null;
+  batch.syncPending = !window.VPASupabase?.isConfigured?.();
+  await save();
+
+  if (!window.VPASupabase?.isConfigured?.()) {
+    window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => {
+      if (result?.synced) { batch.syncPending = false; return save(); }
+    }).catch((error) => console.warn('[VPA] Sincronização automática da batida falhou:', error.message || error));
+  }
   render();
 }
 async function lookupEAN(ean) {
@@ -1239,6 +1331,7 @@ async function autoSyncAllOnLogin(reason = 'login') {
       }
       await mergeCloudProducts();
       await mergeCloudBatidas();
+      await mergeCloudTemporaryBatchItems();
       result.cloudLoaded = true;
       console.info('[VPA] Sincronização automática concluída:', result);
       return result;
@@ -1355,7 +1448,7 @@ function bind() {
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
-  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
+  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
@@ -1448,6 +1541,7 @@ $('productForm').addEventListener('submit', async (e) => {
     categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
     photo: $('photoData').value || existing?.photo || '',
     tag: existing?.tag || '',
+    isTemporaryBatchItem: Boolean(batch && (isNew || existing?.isTemporaryBatchItem || existing?.batchId)),
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
     promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
@@ -1457,15 +1551,20 @@ $('productForm').addEventListener('submit', async (e) => {
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
-    const result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
-    if (!result || result.failed || result.synced !== 1) {
+    const result = product.isTemporaryBatchItem
+      ? await window.VPASupabase?.syncTemporaryBatchItem?.({ ...product, corridorNumber: corridor?.number })
+      : await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
+    const successful = product.isTemporaryBatchItem
+      ? Boolean(result?.id || result?.synced || result?.success)
+      : Boolean(result && !result.failed && result.synced === 1);
+    if (!successful) {
       const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
       showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
     } else {
       product.syncPending = false;
       await save();
-      console.info('[VPA] Produto confirmado no Supabase:', product.id);
-      showTeamToast('☁️ Produto confirmado no banco compartilhado.', 'success');
+      console.info('[VPA] Registro confirmado no Supabase:', product.id);
+      showTeamToast(product.isTemporaryBatchItem ? '☁️ Produto mantido na preparação da batida.' : '☁️ Produto confirmado no banco compartilhado.', 'success');
     }
   } catch (error) {
     console.error('[VPA] Sincronização automática do produto falhou:', error);

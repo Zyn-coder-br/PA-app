@@ -216,6 +216,80 @@
     return result.data;
   }
 
+
+  async function syncTemporaryBatchItem(product) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user) throw new Error('Nenhuma sessão autenticada encontrada.');
+    if (!product?.id || !product?.batchId) throw new Error('Item temporário sem id ou batida.');
+    if (!Number.isFinite(Number(product.corridorNumber))) throw new Error('Corredor local sem número válido.');
+
+    const corridorResult = await client
+      .from('corridors')
+      .select('id, corridor_number')
+      .eq('corridor_number', Number(product.corridorNumber))
+      .eq('active', true)
+      .maybeSingle();
+    if (corridorResult.error) throw corridorResult.error;
+    if (!corridorResult.data) throw new Error('Corredor não encontrado no Supabase.');
+
+    const payload = {
+      id: product.id,
+      batch_id: product.batchId,
+      name: String(product.name || '').trim(),
+      ean: product.ean ? String(product.ean).trim() : null,
+      corridor_id: corridorResult.data.id,
+      quantity_found: Math.max(0, Number(product.quantity || 0)),
+      quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
+      expiration_date: product.expiry || null,
+      status: statusMap[product.status] || 'found',
+      registered_by: session.user.id,
+      app_metadata: {
+        fefo: Boolean(product.fefo),
+        promotor: Boolean(product.promotor),
+        piqueConcluido: Boolean(product.piqueConcluido),
+        piqueAt: product.piqueAt || null,
+        piqueTipo: product.piqueTipo || null,
+        batchId: product.batchId || null,
+        createdAt: product.createdAt || null,
+        origemCadastro: product.origemCadastro || 'batida',
+        categoriaCadastro: product.categoriaCadastro || 'general',
+        tag: product.tag || ''
+      }
+    };
+    if (!payload.name) throw new Error('Produto sem nome.');
+    const result = await client.from('batida_itens_temporarios').upsert(payload, { onConflict: 'id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function listTemporaryBatchItems() {
+    const client = await init();
+    const result = await client
+      .from('batida_itens_temporarios')
+      .select('id, batch_id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
+      .order('created_at', { ascending: true })
+      .limit(5000);
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function deleteTemporaryBatchItemsByBatch(batchId) {
+    if (!batchId) return { deleted: 0 };
+    const client = await init();
+    const result = await client.from('batida_itens_temporarios').delete().eq('batch_id', batchId).select('id');
+    if (result.error) throw result.error;
+    return { deleted: result.data?.length || 0 };
+  }
+
+  async function finalizeBatch(batchId) {
+    if (!batchId) throw new Error('Batida sem identificador.');
+    const client = await init();
+    const result = await client.rpc('finalizar_batida', { p_batida_id: batchId });
+    if (result.error) throw result.error;
+    return result.data || {};
+  }
+
   async function deleteProducts(ids) {
     const list = Array.from(new Set((Array.isArray(ids) ? ids : []).filter(Boolean).map(String)));
     if (!list.length) return { deleted: 0 };
@@ -274,7 +348,8 @@
       started_at: batch.startedAt || new Date().toISOString(),
       completed_at: batch.finishedAt || null,
       status: batchStatusMap[batch.status] || 'in_progress',
-      notes: batch.notes || null
+      notes: batch.notes || null,
+      product_count: Number(batch.productCount || 0)
     };
     const result = await client.from('batidas').upsert(payload, { onConflict: 'id' }).select().single();
     if (result.error) throw result.error;
@@ -312,7 +387,7 @@
     const client = await init();
     const result = await client
       .from('batidas')
-      .select('id, corridor_id, performed_by, started_at, completed_at, status, notes, created_at')
+      .select('id, corridor_id, performed_by, started_at, completed_at, status, notes, product_count, created_at')
       .order('started_at', { ascending: false })
       .limit(200);
     if (result.error) throw result.error;
@@ -380,6 +455,10 @@
     getProfile: getProfile,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
+    syncTemporaryBatchItem: syncTemporaryBatchItem,
+    listTemporaryBatchItems: listTemporaryBatchItems,
+    deleteTemporaryBatchItemsByBatch: deleteTemporaryBatchItemsByBatch,
+    finalizeBatch: finalizeBatch,
     deleteProducts: deleteProducts,
     syncBatch: syncBatch,
     syncBatches: syncBatches,
