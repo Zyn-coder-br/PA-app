@@ -1,3 +1,4 @@
+const APP_VERSION = 'V34';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -73,10 +74,14 @@ function dateOnlyDiff(fromDate, toDate = today()) {
 }
 
 function daysTo(date) {
-  return Math.ceil((new Date(date + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 86400000);
+  if (!date) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(String(date).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+  return Math.ceil((parsed - new Date(today() + 'T12:00:00')) / 86400000);
 }
 function badge(date) {
   const d = daysTo(date);
+  if (!Number.isFinite(d)) return '<span class="badge">Sem validade</span>';
   return `<span class="badge ${d < 0 ? 'danger' : d <= 3 ? 'warn' : ''}">${d < 0 ? 'Vencido' : d === 0 ? 'Vence hoje' : d === 1 ? 'Amanhã' : d + ' dias'}</span>`;
 }
 function statusLabel(status) {
@@ -123,6 +128,7 @@ function photoPreview(p) {
 }
 function daysLabel(date) {
   const d = daysTo(date);
+  if (!Number.isFinite(d)) return 'Validade não informada';
   if (d < 0) return `Vencido há ${Math.abs(d)} dia(s)`;
   if (d === 0) return 'Vence hoje';
   if (d === 1) return 'Vence amanhã';
@@ -562,7 +568,10 @@ async function mergeCloudProducts(shouldRender = true) {
         photo: local?.photo || ''
       };
     });
-    data.products = merged;
+    // Preserva produtos externos do Promotor PA. A sincronização da tabela geral
+    // não pode apagar a lista compartilhada dos promotores.
+    const externalPromotor = data.products.filter((product) => product.externalPromotor);
+    data.products = [...merged, ...externalPromotor];
     await save();
     if (shouldRender) render();
   } catch (error) {
@@ -819,9 +828,51 @@ async function initTeamRealtime() {
   return teamRealtimeStarting;
 }
 
+
+async function checkForAppUpdate() {
+  const status = $('appUpdateStatus');
+  const button = $('checkAppUpdate');
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Verificando nova versão...';
+  try {
+    const response = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) throw new Error('Não foi possível consultar a versão publicada.');
+    const remote = await response.json();
+    const remoteVersion = String(remote.version || '').trim();
+    if (!remoteVersion) throw new Error('Arquivo de versão inválido.');
+    if (remoteVersion === APP_VERSION) {
+      if (status) status.textContent = `✅ Aplicativo atualizado (${APP_VERSION}).`;
+      return;
+    }
+    if (status) status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Preparando atualização...`;
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) {
+        await registration.update();
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key.startsWith('vpa-pwa-')).map((key) => caches.delete(key)));
+    }
+    localStorage.setItem('vpa-last-update-request', remoteVersion);
+    const url = new URL(window.location.href);
+    url.searchParams.set('appv', remoteVersion);
+    url.searchParams.set('_refresh', Date.now());
+    window.location.replace(url.toString());
+  } catch (error) {
+    console.warn('[VPA] Falha ao verificar atualização:', error);
+    if (status) status.textContent = '⚠ Não foi possível verificar a atualização: ' + (error.message || error);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function settings() {
   return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>
   <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas locais são sincronizados automaticamente após o login quando o banco está configurado. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
@@ -1532,6 +1583,7 @@ function bind() {
   $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
+  $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
   $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });

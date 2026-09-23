@@ -56,3 +56,14 @@ end;
 $$;
 revoke all on function public.tag_promotor_product_from_vpa(uuid,text) from public;
 grant execute on function public.tag_promotor_product_from_vpa(uuid,text) to authenticated;
+
+-- V34: garante eventos Realtime para a tabela compartilhada dos promotores.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'promotor_products'
+  ) then
+    alter publication supabase_realtime add table public.promotor_products;
+  end if;
+end $$;
