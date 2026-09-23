@@ -308,6 +308,15 @@ let teamRealtimeActive = false;
 let teamRealtimeStarting = null;
 let teamRealtimeUserId = null;
 let teamNotificationCount = 0;
+const completedBatchNotifications = new Map();
+let cloudSaveTimer = null;
+function scheduleCloudSave() {
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = window.setTimeout(() => {
+    cloudSaveTimer = null;
+    save().catch((error) => console.warn('[VPA] Falha ao persistir atualização da nuvem:', error));
+  }, 350);
+}
 function pendingProductCard(p) {
   const d = daysTo(p.expiry);
   const label = d === 0 ? 'VENCE HOJE' : 'VENCE AMANHÃ';
@@ -351,7 +360,7 @@ async function showRealtimeNotification(title, body, tag, url = './') {
     icon: './icons/notification-small.png',
     badge: './icons/notification-small.png',
     tag,
-    renotify: true,
+    renotify: false,
     data: { url }
   };
   try {
@@ -370,6 +379,12 @@ function notifyTeamEvent(payload) {
   // Uma batida deve gerar somente um aviso quando for concluída.
   // INSERT/UPDATE intermediários não geram notificações para evitar spam.
   if (row.status !== 'completed' || !['INSERT', 'UPDATE'].includes(String(eventType).toUpperCase())) return;
+  const notificationKey = String(row.id) + ':' + String(row.completed_at || row.updated_at || row.status);
+  if (completedBatchNotifications.has(notificationKey)) return;
+  completedBatchNotifications.set(notificationKey, Date.now());
+  for (const [key, time] of completedBatchNotifications.entries()) {
+    if (Date.now() - time > 120000) completedBatchNotifications.delete(key);
+  }
   const corridor = data.corridors.find((c) => String(c.cloudId || c.number) === String(row.corridor_id));
   const corridorLabel = corridor?.name || ('corredor ' + (row.corridor_id || 'desconhecido'));
   const productCount = data.products.filter((product) => String(product.batchId || '') === String(row.id)).length;
@@ -427,7 +442,7 @@ function localProductFromCloud(row) {
   };
 }
 
-async function mergeCloudProducts() {
+async function mergeCloudProducts(shouldRender = true) {
   if (!window.VPASupabase?.listProducts) return;
   try {
     const rows = await window.VPASupabase.listProducts();
@@ -440,7 +455,7 @@ async function mergeCloudProducts() {
     });
     data.products = merged;
     await save();
-    render();
+    if (shouldRender) render();
   } catch (error) {
     console.warn('[VPA] Não foi possível carregar produtos compartilhados:', error.message || error);
   }
@@ -458,10 +473,11 @@ function mergeCloudProductEvent(payload) {
     if (index >= 0) data.products[index] = { ...data.products[index], ...cloud, syncPending: false, photo: data.products[index].photo || '' };
     else data.products.push({ ...cloud, syncPending: false });
   }
-  save().then(() => scheduleRealtimeRender()).catch((error) => console.warn('[VPA] Falha ao salvar produto compartilhado:', error));
+  scheduleCloudSave();
+  scheduleRealtimeRender();
 }
 
-async function mergeCloudBatidas() {
+async function mergeCloudBatidas(shouldRender = true) {
   if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
   try {
     const rows = await window.VPASupabase.listBatidas();
@@ -486,7 +502,7 @@ async function mergeCloudBatidas() {
     });
     data.batches = Array.from(localById.values()).sort((a, b) => String(b.startedAt || b.date || '').localeCompare(String(a.startedAt || a.date || '')));
     await save();
-    render();
+    if (shouldRender) render();
   } catch (error) {
     console.warn('[VPA] Não foi possível carregar batidas da equipe:', error.message || error);
   }
@@ -523,7 +539,7 @@ async function testAndroidNotification() {
       icon: './icons/notification-small.png',
       badge: './icons/notification-small.png',
       tag: 'vpa-android-test-' + Date.now(),
-      renotify: true,
+      renotify: false,
       vibrate: [180, 80, 220],
       timestamp: Date.now(),
       data: { url: './' }
@@ -614,8 +630,9 @@ async function initTeamRealtime() {
       return;
     }
     teamRealtimeUserId = session.user.id;
-    await mergeCloudBatidas();
-    await mergeCloudProducts();
+    await mergeCloudBatidas(false);
+    await mergeCloudProducts(false);
+    render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel };
