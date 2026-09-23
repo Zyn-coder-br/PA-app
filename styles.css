@@ -665,3 +665,48 @@ body{
 .excel-import-head{font-weight:700;position:sticky;top:0;background:var(--card,#fff);z-index:1}
 .excel-import-row{cursor:pointer}
 .excel-import-row input{width:18px;height:18px}
+
+
+/* V26 - ações em massa flutuantes na tela de produtos */
+.bulk-actions-dock{position:fixed;right:22px;bottom:92px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none}
+.bulk-fab{pointer-events:auto;width:56px;height:56px;border:0;border-radius:50%;background:var(--primary);color:#fff;font-size:27px;font-weight:900;box-shadow:0 10px 28px rgba(0,0,0,.24);display:grid;place-items:center}
+.bulk-fab:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.bulk-actions-menu{pointer-events:auto;display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:12px;background:var(--white);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 40px rgba(7,43,30,.25);min-width:220px}
+.bulk-actions-menu[hidden]{display:none}
+.bulk-actions-menu button{width:100%;text-align:left;white-space:nowrap}
+@media(max-width:650px){.bulk-actions-dock{right:14px;bottom:86px}.bulk-fab{width:52px;height:52px}.bulk-actions-menu{min-width:205px}}
+
+/* V26 - modo escuro completo para a tela de produtos e componentes herdados */
+:root[data-theme="dark"] body{background:#121916;color:var(--ink)}
+:root[data-theme="dark"] #view{background:transparent}
+:root[data-theme="dark"] .products-filter-panel,
+:root[data-theme="dark"] .product-stat-card,
+:root[data-theme="dark"] .products-search-wrap,
+:root[data-theme="dark"] .products-subnav,
+:root[data-theme="dark"] .products-list .activity-group-head,
+:root[data-theme="dark"] .products-list .product-row:hover,
+:root[data-theme="dark"] .empty{background:#202b27;color:var(--ink);border-color:var(--line)}
+:root[data-theme="dark"] .product-stat-card strong,
+:root[data-theme="dark"] .products-section-heading h3,
+:root[data-theme="dark"] .product-name,
+:root[data-theme="dark"] .products-section-heading p,
+:root[data-theme="dark"] .products-mini-count,
+:root[data-theme="dark"] .products-toolbar .product-count{color:var(--ink)}
+:root[data-theme="dark"] .products-subnav{background:#1b2621}
+:root[data-theme="dark"] .products-subnav .subnav-btn{color:var(--muted);background:transparent}
+:root[data-theme="dark"] .products-subnav .subnav-btn.active{background:#2d8b5d;color:#fff}
+:root[data-theme="dark"] .products-search-wrap{background:#1b2621}
+:root[data-theme="dark"] .products-search-wrap .search{background:transparent!important;color:var(--ink)!important}
+:root[data-theme="dark"] .products-bulk-toolbar{border-top-color:var(--line)}
+:root[data-theme="dark"] .products-list .activity-group-head{background:#254b3c;color:#a8e7c6}
+:root[data-theme="dark"] .product-stat-card{box-shadow:none}
+:root[data-theme="dark"] .product-stat-icon.green{background:#254b3c;color:#a8e7c6}
+:root[data-theme="dark"] .product-stat-icon.red{background:#492b2b;color:#ff9c9c}
+:root[data-theme="dark"] .product-stat-icon.amber{background:#493c20;color:#f0c45a}
+:root[data-theme="dark"] .product-stat-icon.blue{background:#263d58;color:#9cc5f3}
+:root[data-theme="dark"] .bulk-actions-menu{background:#202b27;border-color:var(--line);box-shadow:0 14px 40px rgba(0,0,0,.5)}
+:root[data-theme="dark"] .bulk-actions-menu .secondary{background:#26352f;color:var(--ink);border-color:var(--line)}
+:root[data-theme="dark"] .bulk-actions-menu .danger-btn{color:#ff9c9c!important}
+:root[data-theme="dark"] .products-hero-action{background:#202b27;color:#a8e7c6;border-color:#426452}
+:root[data-theme="dark"] .products-mini-count{background:#254b3c;color:#a8e7c6}
+:root[data-theme="dark"] .products-list .product-row{border-color:var(--line)}

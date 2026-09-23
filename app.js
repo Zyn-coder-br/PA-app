@@ -271,8 +271,16 @@ function products() {
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div>
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
-      <div class="bulk-toolbar products-bulk-toolbar"><button type="button" class="secondary" id="selectAllProducts">Marcar/desmarcar tudo</button><button type="button" class="secondary" id="bulkStatusBtn">Alterar status</button><button type="button" class="secondary" id="quickTagBtn">Adicionar tag</button><button type="button" class="secondary danger-btn" id="deleteSelectedBtn">Excluir</button></div>
       <div class="list products-list" id="productList">${groupedProductRows(list,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>
+      <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
+        <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">☷</button>
+        <div class="bulk-actions-menu" id="bulkActionsMenu" hidden>
+          <button type="button" class="secondary" id="floatingSelectAll">☑ Marcar/desmarcar tudo</button>
+          <button type="button" class="secondary" id="floatingBulkStatus">↔ Alterar status</button>
+          <button type="button" class="secondary" id="floatingQuickTag">🏷 Adicionar tag</button>
+          <button type="button" class="secondary danger-btn" id="floatingDeleteSelected">🗑 Excluir selecionados</button>
+        </div>
+      </div>
     </div>
   </section>`;
 }
@@ -409,7 +417,8 @@ function notifyProductEvent(payload) {
   for (const [key, time] of recentProductEvents.entries()) if (now - time > 15000) recentProductEvents.delete(key);
   if (recentProductEvents.has(eventFingerprint)) return;
   recentProductEvents.set(eventFingerprint, now);
-  // Produtos continuam sendo sincronizados, mas não geram uma notificação individual.
+  // REGRA V26: eventos de produtos (INSERT/UPDATE/DELETE) são silenciosos.
+  // Nenhum cadastro ou exclusão individual pode disparar notificação.
   mergeCloudProductEvent(payload);
 }
 
@@ -1309,10 +1318,25 @@ function bind() {
   document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); render(); }));
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
 
-  $('selectAllProducts')?.addEventListener('click', () => { const ids = visibleProductIdsForCurrentFilter(); const allSelected = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => allSelected ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); });
-  $('bulkStatusBtn')?.addEventListener('click', openBulkStatusDialog);
-  $('quickTagBtn')?.addEventListener('click', quickAddTag);
-  $('deleteSelectedBtn')?.addEventListener('click', deleteSelectedProducts);
+  const toggleAllProducts = () => { const ids = visibleProductIdsForCurrentFilter(); const allSelected = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => allSelected ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); };
+  const bindBulkAction = (id, action) => { $(id)?.addEventListener('click', action); };
+  bindBulkAction('selectAllProducts', toggleAllProducts);
+  bindBulkAction('bulkStatusBtn', openBulkStatusDialog);
+  bindBulkAction('quickTagBtn', quickAddTag);
+  bindBulkAction('deleteSelectedBtn', deleteSelectedProducts);
+  bindBulkAction('floatingSelectAll', toggleAllProducts);
+  bindBulkAction('floatingBulkStatus', openBulkStatusDialog);
+  bindBulkAction('floatingQuickTag', quickAddTag);
+  bindBulkAction('floatingDeleteSelected', deleteSelectedProducts);
+  const bulkFab = $('bulkFab');
+  const bulkActionsMenu = $('bulkActionsMenu');
+  if (bulkFab && bulkActionsMenu) {
+    bulkFab.addEventListener('click', () => {
+      const willOpen = bulkActionsMenu.hidden;
+      bulkActionsMenu.hidden = !willOpen;
+      bulkFab.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+  }
   $('closeBulkDialog')?.addEventListener('click', () => $('bulkDialog').close());
   $('cancelBulkDialog')?.addEventListener('click', () => $('bulkDialog').close());
   $('bulkActionType')?.addEventListener('change', () => { const isTag = $('bulkActionType').value === 'tag'; $('bulkStatusWrap').hidden = isTag; $('bulkTagWrap').hidden = !isTag; });
