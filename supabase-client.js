@@ -193,6 +193,7 @@
       quantity_found: Math.max(0, Number(product.quantity || product.quantityFound || 0)),
       quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
       expiration_date: product.expiry || null,
+      photo_url: product.photo && !String(product.photo).startsWith('data:') ? product.photo : null,
       status: statusMap[product.status] || 'found',
       registered_by: session.user.id,
       app_metadata: {
@@ -205,7 +206,8 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || null,
         categoriaCadastro: product.categoriaCadastro || null,
-        tag: product.tag || ''
+        tag: product.tag || '',
+        photo: product.photo || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -254,7 +256,8 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || 'batida',
         categoriaCadastro: product.categoriaCadastro || 'general',
-        tag: product.tag || ''
+        tag: product.tag || '',
+        photo: product.photo || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -376,7 +379,7 @@
     const client = await init();
     const result = await client
       .from('products')
-      .select('id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
+      .select('id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, photo_url, status, registered_by, created_at, updated_at, app_metadata')
       .order('created_at', { ascending: false })
       .limit(1000);
     if (result.error) throw result.error;
@@ -500,6 +503,42 @@
   }
 
 
+  async function uploadProductPhoto(productId, dataUrl) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
+    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || '';
+    const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) throw new Error('Formato de foto inválido.');
+    const mime = match[1];
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const extension = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const path = `${session.user.id}/${String(productId)}.${extension}`;
+    const result = await client.storage.from('vpa-product-photos').upload(path, new Blob([bytes], { type: mime }), { upsert: true, contentType: mime, cacheControl: '3600' });
+    if (result.error) throw result.error;
+    const publicResult = client.storage.from('vpa-product-photos').getPublicUrl(path);
+    return publicResult.data.publicUrl;
+  }
+
+  async function createCorridor(name) {
+    const result = await (await init()).rpc('vpa_admin_create_corridor', { p_name: String(name || '').trim() });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+  async function deactivateCorridor(corridorId) {
+    const result = await (await init()).rpc('vpa_admin_deactivate_corridor', { p_corridor_id: Number(corridorId) });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+  async function subscribeCorridors(onChange) {
+    return subscribeChannel('vpa-corridors-equipe', 'corridors', onChange, 'corredores');
+  }
+  async function subscribePresence(onChange) {
+    return subscribeChannel('vpa-presence-equipe', 'vpa_user_presence', onChange, 'presença da equipe');
+  }
+
   async function listCorridors() {
     const client = await init();
     const result = await client.from('corridors').select('id, corridor_number, name, active').eq('active', true).order('corridor_number', { ascending: true });
@@ -576,7 +615,10 @@
     signOut: signOut,
     getProfile: getProfile,
     listCorridors: listCorridors,
+    createCorridor: createCorridor,
+    deactivateCorridor: deactivateCorridor,
     updateCorridorName: updateCorridorName,
+    uploadProductPhoto: uploadProductPhoto,
     heartbeatPresence: heartbeatPresence,
     listTeamMembers: listTeamMembers,
     updateUserRole: updateUserRole,
@@ -599,6 +641,8 @@
     subscribeProducts: subscribeProducts,
     subscribePromotorProducts: subscribePromotorProducts,
     subscribeRebaixaItems: subscribeRebaixaItems,
+    subscribeCorridors: subscribeCorridors,
+    subscribePresence: subscribePresence,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,
