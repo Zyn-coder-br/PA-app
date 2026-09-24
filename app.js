@@ -299,7 +299,6 @@ function products() {
   const fefoCount = list.filter((p) => p.fefo).length;
   const productFilters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   return `<section class="products-page">
-    <div class="products-filter-panel rebaixa-navigation-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${productFilters.map(([key,label]) => `<button type="button" class="subnav-btn ${productFilter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div></div>
     <div class="products-hero">
       <div class="products-hero-copy">
         <div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div>
@@ -683,6 +682,15 @@ async function mergeCloudRebaixaItems(shouldRender = true) {
     console.warn('[VPA] Não foi possível carregar rebaixas compartilhadas:', error.message || error);
   }
 }
+
+async function refreshRebaixaOnReturn() {
+  if (document.visibilityState && document.visibilityState !== 'visible') return;
+  if (!window.VPASupabase?.isConfigured?.()) return;
+  try { await mergeCloudRebaixaItems(view === 'products' && productFilter === 'rebaixa'); }
+  catch (error) { console.warn('[VPA] Atualização ao retornar ao aplicativo:', error.message || error); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRebaixaOnReturn(); });
+window.addEventListener('focus', refreshRebaixaOnReturn);
 
 function notifyRebaixaEvent(payload) {
   const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
@@ -1493,17 +1501,27 @@ async function confirmRebaixaExcelImport() {
     existingKeys.add(key);
     return true;
   });
+  if (!uniqueImported.length) {
+    showTeamToast('ℹ️ Nenhum item novo para importar. Os itens selecionados já estão na lista.', 'warning');
+    return;
+  }
   try {
     if (window.VPASupabase?.upsertRebaixaItems && window.VPASupabase.isConfigured()) {
-      await window.VPASupabase.upsertRebaixaItems(uniqueImported);
+      const savedRows = await window.VPASupabase.upsertRebaixaItems(uniqueImported);
+      if (!Array.isArray(savedRows) || savedRows.length !== uniqueImported.length) {
+        throw new Error('O Supabase não confirmou todos os itens enviados.');
+      }
       await mergeCloudRebaixaItems(false);
+      const savedIds = new Set(data.rebaixaItems.map((item) => String(item.id)));
+      const missing = uniqueImported.filter((item) => !savedIds.has(String(item.id)));
+      if (missing.length) throw new Error(`${missing.length} item(ns) não foram encontrados após a confirmação no Supabase.`);
     } else {
       data.rebaixaItems.push(...uniqueImported);
     }
     data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
     await save();
     $('rebaixaExcelDialog').close();
-    showTeamToast(`✅ ${uniqueImported.length} item(ns) adicionados à lista compartilhada de Rebaixa Automática.`, 'success');
+    showTeamToast(`✅ ${uniqueImported.length} item(ns) confirmados no banco compartilhado de Rebaixa Automática.`, 'success');
     render();
   } catch (error) {
     console.error('[VPA] Falha ao compartilhar lista de rebaixas:', error);

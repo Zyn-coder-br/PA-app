@@ -1,1 +1,14 @@
-{"version":"V40","app":"Vencimento PA","published":"2026-09-24","feature":"Rebaixa Automática compartilhada no Supabase com sincronização Realtime"}
+{
+  "version": "V41",
+  "app": "Vencimento PA",
+  "published": "2026-09-24",
+  "feature": "Rebaixa Automática compartilhada no Supabase com sincronização Realtime",
+  "name": "V41 - Rebaixa compartilhada corrigida",
+  "updatedAt": "2026-09-23",
+  "notes": [
+    "Corrige janela de importação aparecendo fora do modal.",
+    "Remove card duplicado de navegação de produtos.",
+    "Valida confirmação dos itens no Supabase após importação.",
+    "Atualiza a lista de rebaixas ao retornar ao aplicativo."
+  ]
+}
