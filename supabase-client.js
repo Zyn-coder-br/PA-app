@@ -341,7 +341,10 @@
   }
 
   async function syncProducts(products) {
-    const list = Array.isArray(products) ? products : [];
+    // Proteção V45: não permitir que a sincronização geral publique
+    // itens que ainda pertencem à preparação de uma batida.
+    const list = (Array.isArray(products) ? products : [])
+      .filter((product) => !product?.isTemporaryBatchItem);
     const results = { total: list.length, synced: 0, failed: 0, errors: [] };
     for (const product of list) {
       try {

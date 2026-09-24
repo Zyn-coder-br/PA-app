@@ -1,1 +1,1 @@
-{"version":"V44","releasedAt":"2026-09-24","notes":"Realtime cloud: categoria Promotor, fotos compartilhadas, itens de batida, corredores, presença e atualização de perfil."}
+{"version":"V45","releasedAt":"2026-09-24","notes":"Proteção do fluxo de batida: sincronização geral não publica itens temporários; publicação ocorre somente na finalização da batida."}
