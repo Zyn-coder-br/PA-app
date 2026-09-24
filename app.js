@@ -1,4 +1,4 @@
-const APP_VERSION = 'V44';
+const APP_VERSION = 'V45';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -1043,38 +1043,73 @@ async function initTeamRealtime() {
 async function checkForAppUpdate() {
   const status = $('appUpdateStatus');
   const button = $('checkAppUpdate');
+  const updateKey = 'vpa-last-update-request';
+
   if (button) button.disabled = true;
   if (status) status.textContent = 'Verificando nova versão...';
+
   try {
-    const response = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    const response = await fetch('./version.json?check=' + Date.now(), {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
     if (!response.ok) throw new Error('Não foi possível consultar a versão publicada.');
+
     const remote = await response.json();
     const remoteVersion = String(remote.version || '').trim();
     if (!remoteVersion) throw new Error('Arquivo de versão inválido.');
+
     if (remoteVersion === APP_VERSION) {
+      localStorage.removeItem(updateKey);
       if (status) status.textContent = `✅ Aplicativo atualizado (${APP_VERSION}).`;
       return;
     }
-    if (status) status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Preparando atualização...`;
+
+    const previousRequest = localStorage.getItem(updateKey);
+    if (previousRequest === remoteVersion) {
+      if (status) {
+        status.textContent = `⚠ A versão ${remoteVersion} foi encontrada, mas a atualização não foi confirmada. Feche e abra o PWA ou tente novamente após publicar todos os arquivos.`;
+      }
+      return;
+    }
+
+    if (status) {
+      status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Atualizando arquivos...`;
+    }
+
+    localStorage.setItem(updateKey, remoteVersion);
+
+    let registration = null;
     if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.getRegistration();
+      registration = await navigator.serviceWorker.getRegistration();
+
       if (registration) {
         await registration.update();
-        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
       }
     }
+
     if ('caches' in window) {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => key.startsWith('vpa-pwa-')).map((key) => caches.delete(key)));
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith('vpa-pwa-'))
+          .map((key) => caches.delete(key))
+      );
     }
-    localStorage.setItem('vpa-last-update-request', remoteVersion);
+
     const url = new URL(window.location.href);
     url.searchParams.set('appv', remoteVersion);
-    url.searchParams.set('_refresh', Date.now());
+    url.searchParams.set('_refresh', String(Date.now()));
     window.location.replace(url.toString());
   } catch (error) {
     console.warn('[VPA] Falha ao verificar atualização:', error);
-    if (status) status.textContent = '⚠ Não foi possível verificar a atualização: ' + (error.message || error);
+    if (status) {
+      status.textContent = '⚠ Não foi possível verificar a atualização: ' + (error.message || error);
+    }
   } finally {
     if (button) button.disabled = false;
   }
