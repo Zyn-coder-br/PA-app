@@ -582,7 +582,16 @@ async function mergeCloudProducts(shouldRender = true) {
     // Preserva produtos externos do Promotor PA. A sincronização da tabela geral
     // não pode apagar a lista compartilhada dos promotores.
     const externalPromotor = data.products.filter((product) => product.externalPromotor);
-    data.products = [...merged, ...externalPromotor];
+    // Proteção: nunca apagar um cadastro local que ainda não foi confirmado
+    // pelo Supabase. Isso evita que uma consulta de nuvem remova o produto
+    // da tela logo após uma falha temporária de rede/RLS/cadastro.
+    const pendingLocal = data.products.filter((product) =>
+      product.syncPending === true &&
+      !product.externalPromotor &&
+      !product.isTemporaryBatchItem &&
+      !merged.some((cloudProduct) => String(cloudProduct.id) === String(product.id))
+    );
+    data.products = [...merged, ...pendingLocal, ...externalPromotor];
     await save();
     if (shouldRender) render();
   } catch (error) {
@@ -1043,73 +1052,38 @@ async function initTeamRealtime() {
 async function checkForAppUpdate() {
   const status = $('appUpdateStatus');
   const button = $('checkAppUpdate');
-  const updateKey = 'vpa-last-update-request';
-
   if (button) button.disabled = true;
   if (status) status.textContent = 'Verificando nova versão...';
-
   try {
-    const response = await fetch('./version.json?check=' + Date.now(), {
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-cache' }
-    });
+    const response = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
     if (!response.ok) throw new Error('Não foi possível consultar a versão publicada.');
-
     const remote = await response.json();
     const remoteVersion = String(remote.version || '').trim();
     if (!remoteVersion) throw new Error('Arquivo de versão inválido.');
-
     if (remoteVersion === APP_VERSION) {
-      localStorage.removeItem(updateKey);
       if (status) status.textContent = `✅ Aplicativo atualizado (${APP_VERSION}).`;
       return;
     }
-
-    const previousRequest = localStorage.getItem(updateKey);
-    if (previousRequest === remoteVersion) {
-      if (status) {
-        status.textContent = `⚠ A versão ${remoteVersion} foi encontrada, mas a atualização não foi confirmada. Feche e abra o PWA ou tente novamente após publicar todos os arquivos.`;
-      }
-      return;
-    }
-
-    if (status) {
-      status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Atualizando arquivos...`;
-    }
-
-    localStorage.setItem(updateKey, remoteVersion);
-
-    let registration = null;
+    if (status) status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Preparando atualização...`;
     if ('serviceWorker' in navigator) {
-      registration = await navigator.serviceWorker.getRegistration();
-
+      const registration = await navigator.serviceWorker.getRegistration();
       if (registration) {
         await registration.update();
-
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
       }
     }
-
     if ('caches' in window) {
       const keys = await caches.keys();
-      await Promise.all(
-        keys
-          .filter((key) => key.startsWith('vpa-pwa-'))
-          .map((key) => caches.delete(key))
-      );
+      await Promise.all(keys.filter((key) => key.startsWith('vpa-pwa-')).map((key) => caches.delete(key)));
     }
-
+    localStorage.setItem('vpa-last-update-request', remoteVersion);
     const url = new URL(window.location.href);
     url.searchParams.set('appv', remoteVersion);
-    url.searchParams.set('_refresh', String(Date.now()));
+    url.searchParams.set('_refresh', Date.now());
     window.location.replace(url.toString());
   } catch (error) {
     console.warn('[VPA] Falha ao verificar atualização:', error);
-    if (status) {
-      status.textContent = '⚠ Não foi possível verificar a atualização: ' + (error.message || error);
-    }
+    if (status) status.textContent = '⚠ Não foi possível verificar a atualização: ' + (error.message || error);
   } finally {
     if (button) button.disabled = false;
   }
@@ -2120,7 +2094,10 @@ $('productForm').addEventListener('submit', async (e) => {
     batchNotes: batch?.notes || existing?.batchNotes || null
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
+  // Atualiza a tela imediatamente: o cadastro local não pode depender do resultado
+  // da sincronização com a nuvem para aparecer na lista.
   await save();
+  render();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
     // Nunca use syncProducts para itens vinculados a uma batida aberta.
@@ -2148,8 +2125,13 @@ $('productForm').addEventListener('submit', async (e) => {
       showTeamToast(product.isTemporaryBatchItem ? '☁️ Produto mantido na preparação da batida.' : '☁️ Produto confirmado no banco compartilhado.', 'success');
     }
   } catch (error) {
+    // Nunca perder o estado pendente quando a nuvem falhar.
+    product.syncPending = true;
+    await save();
+    render();
+    const detail = error?.message ? ` Detalhe: ${error.message}` : '';
     console.error('[VPA] Sincronização automática do produto falhou:', error);
-    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.' + detail, 'warning');
   }
   pendingProductPhotoFile = null;
   $('productDialog').close();
