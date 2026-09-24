@@ -1014,7 +1014,13 @@ function render() {
   const pageContent = view === 'dashboard' ? dashboard() : view === 'products' ? products() : view === 'batches' ? batches() : view === 'expiries' ? expiries() : view === 'pending' ? pending() : view === 'reports' ? reports() : settings();
   const standardViews = new Set(['batches', 'expiries', 'pending', 'reports', 'settings']);
   $('view').innerHTML = standardViews.has(view) ? `<div class="standard-page">${pageContent}</div>` : pageContent;
-  $('floatingNavPanel').innerHTML = floatingItems();
+  const floatingPanel = $('floatingNavPanel');
+  if (floatingPanel) {
+    floatingPanel.innerHTML = floatingItems();
+    // Trocar de tela ou de subaba nunca deve deixar o menu flutuante aberto
+    // sobre o conteúdo, evitando a duplicação visual da navegação de Produtos.
+    floatingPanel.classList.remove('open');
+  }
   // O botão de cadastro é recriado a cada renderização; vincular diretamente aqui evita que ele fique sem evento.
   const newProductButton = $('newProduct');
   if (newProductButton) newProductButton.onclick = (event) => { event.preventDefault(); openProduct(null, true); };
@@ -1543,7 +1549,14 @@ async function markRebaixaDone(id) {
   try {
     if (window.VPASupabase?.completeRebaixaItem && window.VPASupabase.isConfigured()) {
       await window.VPASupabase.completeRebaixaItem(id);
-      await mergeCloudRebaixaItems(false);
+      // Retira imediatamente da tela local. A sincronização seguinte apenas
+      // reconcilia o estado com a lista compartilhada do Supabase.
+      data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
+      try {
+        await mergeCloudRebaixaItems(false);
+      } catch (syncError) {
+        console.warn('[VPA] Item concluído, mas a reconciliação da lista falhou:', syncError);
+      }
     } else {
       data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
     }

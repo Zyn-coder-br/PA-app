@@ -432,16 +432,31 @@
     const client = await init();
     const session = await getSession();
     if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
+    const completedAt = new Date().toISOString();
     const result = await client
       .from('rebaixa_items')
-      .update({ status: 'completed', completed_by: session.user.id, completed_at: new Date().toISOString() })
+      .update({ status: 'completed', completed_by: session.user.id, completed_at: completedAt })
       .eq('id', id)
-      .eq('status', 'pending')
-      .select('id, status, completed_by, completed_at')
-      .maybeSingle();
+      .eq('status', 'pending');
     if (result.error) throw result.error;
-    if (!result.data) throw new Error('Item já concluído ou não encontrado na lista compartilhada.');
-    return result.data;
+
+    // Confirma a alteração com uma nova leitura. Isso evita considerar sucesso
+    // quando uma política RLS bloqueou a atualização silenciosamente.
+    const verify = await client
+      .from('rebaixa_items')
+      .select('id, status, completed_by, completed_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (verify.error) throw verify.error;
+    if (verify.data && verify.data.status !== 'completed') {
+      throw new Error('O banco não confirmou a conclusão deste item. Verifique as políticas RLS de UPDATE.');
+    }
+    if (!verify.data) {
+      // Uma política de leitura pode ocultar o registro após a conclusão;
+      // nesse caso a atualização não deve ser tratada como erro.
+      return { id, status: 'completed', completed_by: session.user.id, completed_at: completedAt };
+    }
+    return verify.data;
   }
 
   async function listBatidas() {
