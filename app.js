@@ -1,4 +1,4 @@
-const APP_VERSION = 'V37';
+const APP_VERSION = 'V38';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -297,7 +297,9 @@ function products() {
   const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
   const resolved = list.filter((p) => p.status === 'resolvido').length;
   const fefoCount = list.filter((p) => p.fefo).length;
+  const productFilters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   return `<section class="products-page">
+    <div class="products-filter-panel rebaixa-navigation-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${productFilters.map(([key,label]) => `<button type="button" class="subnav-btn ${productFilter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div></div>
     <div class="products-hero">
       <div class="products-hero-copy">
         <div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div>
