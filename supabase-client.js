@@ -394,6 +394,56 @@
     return result.data || [];
   }
 
+
+  async function listRebaixaItems() {
+    const client = await init();
+    const result = await client
+      .from('rebaixa_items')
+      .select('id, loja, plu, name, quantity, expiry, value, status, created_by, created_at, completed_by, completed_at')
+      .neq('status', 'completed')
+      .order('expiry', { ascending: true })
+      .limit(10000);
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function upsertRebaixaItems(items) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
+    const list = (Array.isArray(items) ? items : []).map((item) => ({
+      id: item.id,
+      loja: String(item.loja || '').trim(),
+      plu: String(item.plu || '').trim(),
+      name: String(item.name || '').trim(),
+      quantity: item.quantity ?? '',
+      expiry: item.expiry || null,
+      value: item.value === '' || item.value == null ? null : Number(item.value),
+      status: 'pending',
+      created_by: session.user.id
+    })).filter((item) => item.name && item.expiry);
+    if (!list.length) return [];
+    const result = await client.from('rebaixa_items').upsert(list, { onConflict: 'id' }).select();
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function completeRebaixaItem(id) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
+    const result = await client
+      .from('rebaixa_items')
+      .update({ status: 'completed', completed_by: session.user.id, completed_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select('id, status, completed_by, completed_at')
+      .maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error('Item já concluído ou não encontrado na lista compartilhada.');
+    return result.data;
+  }
+
   async function listBatidas() {
     const client = await init();
     const result = await client
@@ -436,6 +486,10 @@
 
   async function subscribePromotorProducts(onChange) {
     return subscribeChannel('vpa-promotor-products', 'promotor_products', onChange, 'produtos do Promotor PA');
+  }
+
+  async function subscribeRebaixaItems(onChange) {
+    return subscribeChannel('vpa-rebaixa-items', 'rebaixa_items', onChange, 'Rebaixa Automática');
   }
 
   async function deletePromotorProduct(productId) {
@@ -493,10 +547,14 @@
     syncBatches: syncBatches,
     listProducts: listProducts,
     listPromotorProducts: listPromotorProducts,
+    listRebaixaItems: listRebaixaItems,
+    upsertRebaixaItems: upsertRebaixaItems,
+    completeRebaixaItem: completeRebaixaItem,
     listBatidas: listBatidas,
     subscribeBatidas: subscribeBatidas,
     subscribeProducts: subscribeProducts,
     subscribePromotorProducts: subscribePromotorProducts,
+    subscribeRebaixaItems: subscribeRebaixaItems,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,

@@ -1,4 +1,4 @@
-const APP_VERSION = 'V38';
+const APP_VERSION = 'V40';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -650,6 +650,54 @@ function mergeCloudProductEvent(payload) {
   scheduleRealtimeRender();
 }
 
+
+function localRebaixaFromCloud(row) {
+  return {
+    id: String(row.id),
+    loja: row.loja || '',
+    plu: row.plu || '',
+    name: row.name || '',
+    quantity: row.quantity ?? '',
+    expiry: row.expiry || '',
+    value: row.value ?? '',
+    status: row.status || 'pending',
+    createdBy: row.created_by || null,
+    createdAt: row.created_at || new Date().toISOString(),
+    completedBy: row.completed_by || null,
+    completedAt: row.completed_at || null,
+    synced: true
+  };
+}
+
+async function mergeCloudRebaixaItems(shouldRender = true) {
+  if (!window.VPASupabase?.listRebaixaItems) return;
+  try {
+    const rows = await window.VPASupabase.listRebaixaItems();
+    const remote = rows.map(localRebaixaFromCloud).filter((item) => item.status !== 'completed');
+    // Não apagar uma lista local antiga se a tabela ainda estiver vazia no primeiro acesso.
+    if (remote.length || !data.rebaixaItems.length) data.rebaixaItems = remote;
+    data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
+    await save();
+    if (shouldRender) render();
+  } catch (error) {
+    console.warn('[VPA] Não foi possível carregar rebaixas compartilhadas:', error.message || error);
+  }
+}
+
+function notifyRebaixaEvent(payload) {
+  const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
+  const row = payload?.new || payload?.record || payload?.old || {};
+  const actorId = row.created_by || row.completed_by || null;
+  if (actorId && teamRealtimeUserId && String(actorId) === String(teamRealtimeUserId)) {
+    mergeCloudRebaixaItems(true).catch(() => {});
+    return;
+  }
+  mergeCloudRebaixaItems(true).catch((error) => console.warn('[VPA] Atualização da Rebaixa Automática:', error));
+  const title = eventType === 'DELETE' ? 'Rebaixa Automática atualizada' : row.status === 'completed' ? 'Rebaixa Automática concluída' : 'Nova lista de Rebaixa Automática';
+  showTeamToast('🔔 ' + title, 'team');
+  showRealtimeNotification('Vencimento PA', title, 'vpa-rebaixa-' + (row.id || Date.now()));
+}
+
 async function mergeCloudBatidas(shouldRender = true) {
   if (!window.VPASupabase || !window.VPASupabase.isConfigured()) return;
   try {
@@ -816,11 +864,13 @@ async function initTeamRealtime() {
     await mergeCloudProducts(false);
     await mergeCloudTemporaryBatchItems(false);
     await mergeCloudPromotorProducts(false);
+    await mergeCloudRebaixaItems(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel };
+    const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel };
     teamRealtimeActive = true;
     showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
    } catch (error) {
@@ -1435,14 +1485,30 @@ async function readRebaixaExcelFile(event) {
 async function confirmRebaixaExcelImport() {
   const selected = rebaixaExcelItems.filter((item) => item.selected && item.name && item.expiry);
   if (!selected.length) { alert('Selecione pelo menos um item.'); return; }
-  const imported = selected.map((item) => ({ id: uid(), loja: item.loja, plu: item.plu, name: item.name, quantity: item.quantity, expiry: item.expiry, value: item.value, createdAt: new Date().toISOString() }));
+  const imported = selected.map((item) => ({ id: uid(), loja: item.loja, plu: item.plu, name: item.name, quantity: item.quantity, expiry: item.expiry, value: item.value, status: 'pending', createdAt: new Date().toISOString() }));
   const existingKeys = new Set(data.rebaixaItems.map((item) => `${item.loja}|${item.plu}|${item.name}|${item.expiry}`));
-  imported.forEach((item) => { const key = `${item.loja}|${item.plu}|${item.name}|${item.expiry}`; if (!existingKeys.has(key)) { data.rebaixaItems.push(item); existingKeys.add(key); } });
-  data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
-  await save();
-  $('rebaixaExcelDialog').close();
-  showTeamToast(`✅ ${imported.length} item(ns) processado(s) na lista de Rebaixa Automática.`, 'success');
-  render();
+  const uniqueImported = imported.filter((item) => {
+    const key = `${item.loja}|${item.plu}|${item.name}|${item.expiry}`;
+    if (existingKeys.has(key)) return false;
+    existingKeys.add(key);
+    return true;
+  });
+  try {
+    if (window.VPASupabase?.upsertRebaixaItems && window.VPASupabase.isConfigured()) {
+      await window.VPASupabase.upsertRebaixaItems(uniqueImported);
+      await mergeCloudRebaixaItems(false);
+    } else {
+      data.rebaixaItems.push(...uniqueImported);
+    }
+    data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
+    await save();
+    $('rebaixaExcelDialog').close();
+    showTeamToast(`✅ ${uniqueImported.length} item(ns) adicionados à lista compartilhada de Rebaixa Automática.`, 'success');
+    render();
+  } catch (error) {
+    console.error('[VPA] Falha ao compartilhar lista de rebaixas:', error);
+    showTeamToast('⚠️ Não foi possível compartilhar a lista. Verifique a tabela rebaixa_items no Supabase.', 'warning');
+  }
 }
 function exportRebaixaExcel() {
   if (!data.rebaixaItems.length) return;
@@ -1454,12 +1520,23 @@ function exportRebaixaExcel() {
   XLSX.writeFile(workbook, `rebaixas-${today()}.xlsx`);
 }
 async function markRebaixaDone(id) {
-  const item = data.rebaixaItems.find((entry) => entry.id === id);
+  const item = data.rebaixaItems.find((entry) => String(entry.id) === String(id));
   if (!item) return;
-  data.rebaixaItems = data.rebaixaItems.filter((entry) => entry.id !== id);
-  await save();
-  showTeamToast(`✅ ${item.name} marcado como preço alterado.`, 'success');
-  render();
+  try {
+    if (window.VPASupabase?.completeRebaixaItem && window.VPASupabase.isConfigured()) {
+      await window.VPASupabase.completeRebaixaItem(id);
+      await mergeCloudRebaixaItems(false);
+    } else {
+      data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
+    }
+    await save();
+    showTeamToast(`✅ ${item.name} marcado como preço alterado.`, 'success');
+    if (!data.rebaixaItems.length) showTeamToast('📣 Rebaixas automática realizada.', 'success');
+    render();
+  } catch (error) {
+    console.error('[VPA] Falha ao concluir rebaixa:', error);
+    showTeamToast('⚠️ Não foi possível atualizar a rebaixa compartilhada.', 'warning');
+  }
 }
 
 let piquePhotoData = '';
@@ -1565,6 +1642,7 @@ async function autoSyncAllOnLogin(reason = 'login') {
       await mergeCloudBatidas();
       await mergeCloudTemporaryBatchItems();
       await mergeCloudPromotorProducts(false);
+      await mergeCloudRebaixaItems(false);
       result.cloudLoaded = true;
       console.info('[VPA] Sincronização automática concluída:', result);
       return result;
