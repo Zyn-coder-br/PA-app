@@ -908,3 +908,68 @@ body{
   .rebaixa-date { width:100%; align-items:flex-start; }
   .rebaixa-done-btn { width:100%; }
 }
+
+
+/* V39 - Rebaixa Automática: janela responsiva com rodapé de ações sempre acessível */
+.rebaixa-import-dialog {
+  width: min(96vw, 1040px);
+  max-width: 1040px;
+  height: min(92dvh, 860px);
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.rebaixa-import-dialog .dialog-head {
+  flex: 0 0 auto;
+  padding: 22px 26px 0;
+  margin-bottom: 12px;
+}
+.rebaixa-import-dialog > label {
+  flex: 0 0 auto;
+  margin: 0 26px 10px;
+}
+.rebaixa-import-dialog > #rebaixaExcelStatus {
+  flex: 0 0 auto;
+  margin: 0 26px 8px;
+}
+.rebaixa-import-dialog > .fefo-ocr-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  margin: 0 26px;
+  padding: 12px;
+}
+.rebaixa-import-dialog > .dialog-actions {
+  flex: 0 0 auto;
+  margin: 14px 26px 0;
+  padding: 0 0 22px;
+  background: var(--card, #fff);
+}
+@media (max-width: 650px) {
+  .rebaixa-import-dialog {
+    width: 96vw;
+    height: min(94dvh, 760px);
+    max-height: calc(100dvh - 16px);
+  }
+  .rebaixa-import-dialog .dialog-head {
+    padding: 18px 18px 0;
+  }
+  .rebaixa-import-dialog > label,
+  .rebaixa-import-dialog > #rebaixaExcelStatus {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+  .rebaixa-import-dialog > .fefo-ocr-results {
+    margin-left: 18px;
+    margin-right: 18px;
+    padding: 8px;
+  }
+  .rebaixa-import-dialog > .dialog-actions {
+    margin-left: 18px;
+    margin-right: 18px;
+    padding-bottom: 16px;
+  }
+}
