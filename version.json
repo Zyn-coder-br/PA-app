@@ -1,1 +1,5 @@
-{"version":"V44","releasedAt":"2026-09-24","notes":"Presença online em tempo real, atualização administrativa e sincronização Realtime de corredores."}
+{
+  "version": "V44-CORRECOES-FOTOS-CATEGORIAS",
+  "releasedAt": "2026-09-24T09:45:00-03:00",
+  "base": "V43-CORREDORES-AJUSTES"
+}

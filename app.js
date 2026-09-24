@@ -372,7 +372,6 @@ let rebaixaCompletionTimer = null;
 let rebaixaCompletionNoticeShown = false;
 let presenceTimer = null;
 let teamAdminRefreshTimer = null;
-let presenceRefreshTimer = null;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -538,7 +537,7 @@ function localProductFromTemporary(row) {
     piqueTipo: meta.piqueTipo || null,
     isTemporaryBatchItem: true,
     syncPending: false,
-    photo: ''
+    photo: row.photo_url || ''
   };
 }
 
@@ -575,7 +574,7 @@ async function mergeCloudProducts(shouldRender = true) {
         origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
         categoriaCadastro: cloud.categoriaCadastro || local?.categoriaCadastro || 'general',
         syncPending: false,
-        photo: local?.photo || ''
+        photo: cloud.photo || local?.photo || ''
       };
     });
     // Preserva produtos externos do Promotor PA. A sincronização da tabela geral
@@ -915,7 +914,7 @@ function isAdministrator() {
   return String(window.VPA_PROFILE?.role || '').toLowerCase() === 'admin';
 }
 function roleLabel(role) {
-  return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador' }[role] || role || 'Usuário');
+  return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }[role] || role || 'Usuário');
 }
 async function mergeCloudCorridors(shouldRender = true) {
   if (!window.VPASupabase?.listCorridors || !window.VPASupabase.isConfigured()) return;
@@ -931,28 +930,12 @@ async function mergeCloudCorridors(shouldRender = true) {
     if (shouldRender) render();
   } catch (error) { console.warn('[VPA] Não foi possível carregar corredores compartilhados:', error.message || error); }
 }
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    window.VPASupabase?.heartbeatPresence?.().catch(() => {});
-    if (isAdministrator()) loadAdminTeamMembers();
-  }
-});
-
 async function startPresenceHeartbeat() {
   if (presenceTimer) return;
   const beat = () => window.VPASupabase?.heartbeatPresence?.().catch((error) => console.warn('[VPA] Presença:', error.message || error));
   await beat();
   presenceTimer = window.setInterval(beat, 60000);
 }
-function scheduleAdminPresenceRefresh() {
-  if (!isAdministrator()) return;
-  window.clearTimeout(teamAdminRefreshTimer);
-  teamAdminRefreshTimer = window.setTimeout(() => {
-    teamAdminRefreshTimer = null;
-    loadAdminTeamMembers();
-  }, 350);
-}
-
 async function loadAdminTeamMembers() {
   const target = $('adminTeamList');
   if (!target || !isAdministrator() || !window.VPASupabase?.listTeamMembers) return;
@@ -962,7 +945,7 @@ async function loadAdminTeamMembers() {
     target.innerHTML = members.length ? members.map((member) => {
       const online = Boolean(member.online);
       const role = String(member.role || 'operador');
-      return `<div class="team-admin-row"><div><strong>${esc(member.full_name || member.email || 'Usuário')}</strong><small>${esc(member.email || '')} · <span class="presence-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}</small></div><select data-team-role="${esc(member.id)}"><option value="operador" ${role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${role === 'chefe' ? 'selected' : ''}>Gerência</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`;
+      return `<div class="team-admin-row"><div><strong>${esc(member.full_name || member.email || 'Usuário')}</strong><small>${esc(member.email || '')} · <span class="presence-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}</small></div><select data-team-role="${esc(member.id)}"><option value="operador" ${role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${role === 'chefe' ? 'selected' : ''}>Gerência</option><option value="promotor" ${role === 'promotor' ? 'selected' : ''}>Promotor</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`;
     }).join('') : '<div class="empty">Nenhum usuário encontrado.</div>';
     target.querySelectorAll('[data-team-role]').forEach((select) => select.addEventListener('change', async () => {
       try { await window.VPASupabase.updateUserRole(select.dataset.teamRole, select.value); showTeamToast('✅ Categoria do usuário atualizada.', 'success'); }
@@ -994,22 +977,10 @@ async function initTeamRealtime() {
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
     const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
-    const corridorChannel = await window.VPASupabase.subscribeCorridors(async () => {
-      await mergeCloudCorridors(true);
-      scheduleAdminPresenceRefresh();
-    });
-    const presenceChannel = await window.VPASupabase.subscribePresence(async () => {
-      scheduleAdminPresenceRefresh();
-    });
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, corridors: corridorChannel, presence: presenceChannel };
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel };
     teamRealtimeActive = true;
     await startPresenceHeartbeat();
-    if (isAdministrator()) {
-      window.clearInterval(presenceRefreshTimer);
-      presenceRefreshTimer = window.setInterval(() => loadAdminTeamMembers(), 60000);
-      await loadAdminTeamMembers();
-    }
-    showTeamToast('🟢 Equipe online: presença, batidas e corredores compartilhados ativados.', 'success');
+    showTeamToast('🟢 Equipe online: batidas e corredores compartilhados ativados.', 'success');
    } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
     return null;
@@ -1268,6 +1239,11 @@ async function finishBatch() {
     try {
       const result = await window.VPASupabase.finalizeBatch(batch.id);
       batch.productCount = Number(result?.product_count ?? count);
+      // Garante que os produtos e suas fotos também existam no catálogo geral.
+      if (typeof window.VPASupabase.syncProducts === 'function') {
+        const publication = await window.VPASupabase.syncProducts(batchProducts.map((product) => ({ ...product, corridorNumber: data.corridors.find((corridor) => String(corridor.id) === String(product.corridorId))?.number })));
+        if (publication.failed) throw new Error('Falha ao publicar ' + publication.failed + ' produto(s) no catálogo geral.');
+      }
       batchProducts.forEach((product) => {
         product.isTemporaryBatchItem = false;
         product.syncPending = false;
@@ -2049,6 +2025,13 @@ $('productForm').addEventListener('submit', async (e) => {
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
+    // Fotos devem ser enviadas para o Storage compartilhado antes do registro.
+    if (product.photo && String(product.photo).startsWith('data:') && typeof window.VPASupabase?.uploadProductPhoto === 'function') {
+      product.photo = await window.VPASupabase.uploadProductPhoto(product.id, product.photo);
+      const localProduct = data.products.find((item) => String(item.id) === String(product.id));
+      if (localProduct) localProduct.photo = product.photo;
+      await save();
+    }
     // Nunca use syncProducts para itens vinculados a uma batida aberta.
     // Se a rotina temporária não estiver disponível, interrompemos o envio
     // em vez de publicar acidentalmente no catálogo geral.

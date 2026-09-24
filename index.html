@@ -132,7 +132,7 @@
     var nameEl = byId('vpaHeaderUserName'); var roleEl = byId('vpaHeaderUserRole'); var avatarEl = byId('vpaHeaderAvatar');
     if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
     if (avatarEl) { var savedAvatar = ''; try { savedAvatar = localStorage.getItem('vpa-profile-avatar') || ''; } catch (e) {} if (savedAvatar) { avatarEl.innerHTML = '<img src="' + savedAvatar.replace(/"/g, '&quot;') + '" alt="Foto do perfil">'; avatarEl.classList.add('has-photo'); } else { avatarEl.textContent = first; avatarEl.classList.remove('has-photo'); } }
-    if (roleEl) { var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
+    if (roleEl) { var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', promotor: 'Promotor', operador: 'Operador' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
     window.VPA_PROFILE = profile || null;
   }
   function applyProfileProtection(profile) {
