@@ -2052,9 +2052,12 @@ $('productForm').addEventListener('submit', async (e) => {
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
   const formBatchId = $('productBatchId')?.value || '';
+  // O campo oculto define explicitamente se o produto pertence a uma batida.
+  // Cadastro manual fora de uma batida deve permanecer sem batchId, mesmo
+  // quando existe outra batida aberta no armazenamento local.
   const batch = formBatchId
     ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
-    : (!existing ? activeBatch() : null);
+    : null;
   const isNew = !existing;
   const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
   let photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
