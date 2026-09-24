@@ -160,6 +160,30 @@
   }
 
 
+  const PRODUCT_PHOTO_BUCKET = 'vpa-product-photos';
+
+  async function uploadProductPhoto(file, productId) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
+    if (!file) return '';
+    if (!productId) throw new Error('Produto sem identificador para a foto.');
+    if (file.size > 6 * 1024 * 1024) throw new Error('A foto deve ter no máximo 6 MB.');
+    const extension = (file.name || '').split('.').pop()?.toLowerCase() || (file.type === 'image/png' ? 'png' : 'jpg');
+    const safeExt = ['jpg','jpeg','png','webp','heic','heif'].includes(extension) ? extension : 'jpg';
+    const path = `${session.user.id}/${productId}.${safeExt}`;
+    const result = await client.storage.from(PRODUCT_PHOTO_BUCKET).upload(path, file, {
+      contentType: file.type || 'image/jpeg',
+      upsert: true,
+      cacheControl: '3600'
+    });
+    if (result.error) throw result.error;
+    const publicResult = client.storage.from(PRODUCT_PHOTO_BUCKET).getPublicUrl(path);
+    const publicUrl = publicResult?.data?.publicUrl || '';
+    if (!publicUrl) throw new Error('O Supabase não retornou a URL da foto.');
+    return publicUrl;
+  }
+
   const statusMap = {
     corredor: 'in_corridor',
     vencimento: 'found',
@@ -189,11 +213,11 @@
       id: product.id,
       name: String(product.name || '').trim(),
       ean: product.ean ? String(product.ean).trim() : null,
+      photo_url: product.photoCloudUrl || null,
       corridor_id: corridorResult.data.id,
       quantity_found: Math.max(0, Number(product.quantity || product.quantityFound || 0)),
       quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
       expiration_date: product.expiry || null,
-      photo_url: product.photo && !String(product.photo).startsWith('data:') ? product.photo : null,
       status: statusMap[product.status] || 'found',
       registered_by: session.user.id,
       app_metadata: {
@@ -206,8 +230,7 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || null,
         categoriaCadastro: product.categoriaCadastro || null,
-        tag: product.tag || '',
-        photo: product.photo || ''
+        tag: product.tag || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -235,11 +258,26 @@
     if (corridorResult.error) throw corridorResult.error;
     if (!corridorResult.data) throw new Error('Corredor não encontrado no Supabase.');
 
+    // Garante que a batida exista na nuvem antes do item temporário.
+    // Isso elimina a corrida entre o cadastro da batida e o primeiro produto
+    // (FK batch_id), que era a causa típica do aviso 'salvo localmente'.
+    const batchResult = await client.from('batidas').upsert({
+      id: product.batchId,
+      corridor_id: corridorResult.data.id,
+      performed_by: session.user.id,
+      started_at: product.batchStartedAt || new Date().toISOString(),
+      status: 'in_progress',
+      notes: product.batchNotes || null,
+      product_count: 0
+    }, { onConflict: 'id' }).select('id').single();
+    if (batchResult.error) throw batchResult.error;
+
     const payload = {
       id: product.id,
       batch_id: product.batchId,
       name: String(product.name || '').trim(),
       ean: product.ean ? String(product.ean).trim() : null,
+      photo_url: product.photoCloudUrl || null,
       corridor_id: corridorResult.data.id,
       quantity_found: Math.max(0, Number(product.quantity || 0)),
       quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
@@ -256,8 +294,7 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || 'batida',
         categoriaCadastro: product.categoriaCadastro || 'general',
-        tag: product.tag || '',
-        photo: product.photo || ''
+        tag: product.tag || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -270,7 +307,7 @@
     const client = await init();
     const result = await client
       .from('batida_itens_temporarios')
-      .select('id, batch_id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
+      .select('id, batch_id, name, ean, photo_url, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
       .order('created_at', { ascending: true })
       .limit(5000);
     if (result.error) throw result.error;
@@ -379,7 +416,7 @@
     const client = await init();
     const result = await client
       .from('products')
-      .select('id, name, ean, corridor_id, quantity_found, quantity_separated, expiration_date, photo_url, status, registered_by, created_at, updated_at, app_metadata')
+      .select('id, name, ean, photo_url, corridor_id, quantity_found, quantity_separated, expiration_date, status, registered_by, created_at, updated_at, app_metadata')
       .order('created_at', { ascending: false })
       .limit(1000);
     if (result.error) throw result.error;
@@ -487,6 +524,28 @@
     return subscribeChannel('vpa-produtos-equipe', 'products', onChange, 'produtos');
   }
 
+  async function subscribeTemporaryBatchItems(onChange) {
+    return subscribeChannel('vpa-batida-itens-temporarios', 'batida_itens_temporarios', onChange, 'itens temporários das batidas');
+  }
+
+  async function subscribeCorridors(onChange) {
+    return subscribeChannel('vpa-corredores-equipe', 'corridors', onChange, 'corredores');
+  }
+
+  async function subscribePresence(onChange) {
+    return subscribeChannel('vpa-presenca-equipe', 'vpa_user_presence', onChange, 'presença da equipe');
+  }
+
+  async function subscribeProfile(userId, onChange) {
+    const client = await init();
+    if (!userId) return null;
+    const channelName = 'vpa-perfil-' + String(userId);
+    return subscribeChannel(channelName, 'profiles', function (payload) {
+      const row = payload?.new || payload?.record || payload?.old || {};
+      if (!row.id || String(row.id) === String(userId)) onChange(payload);
+    }, 'perfil do usuário');
+  }
+
   async function subscribePromotorProducts(onChange) {
     return subscribeChannel('vpa-promotor-products', 'promotor_products', onChange, 'produtos do Promotor PA');
   }
@@ -502,42 +561,6 @@
     return result.data;
   }
 
-
-  async function uploadProductPhoto(productId, dataUrl) {
-    const client = await init();
-    const session = await getSession();
-    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada encontrada.');
-    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || '';
-    const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) throw new Error('Formato de foto inválido.');
-    const mime = match[1];
-    const binary = atob(match[2]);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    const extension = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
-    const path = `${session.user.id}/${String(productId)}.${extension}`;
-    const result = await client.storage.from('vpa-product-photos').upload(path, new Blob([bytes], { type: mime }), { upsert: true, contentType: mime, cacheControl: '3600' });
-    if (result.error) throw result.error;
-    const publicResult = client.storage.from('vpa-product-photos').getPublicUrl(path);
-    return publicResult.data.publicUrl;
-  }
-
-  async function createCorridor(name) {
-    const result = await (await init()).rpc('vpa_admin_create_corridor', { p_name: String(name || '').trim() });
-    if (result.error) throw result.error;
-    return result.data;
-  }
-  async function deactivateCorridor(corridorId) {
-    const result = await (await init()).rpc('vpa_admin_deactivate_corridor', { p_corridor_id: Number(corridorId) });
-    if (result.error) throw result.error;
-    return result.data;
-  }
-  async function subscribeCorridors(onChange) {
-    return subscribeChannel('vpa-corridors-equipe', 'corridors', onChange, 'corredores');
-  }
-  async function subscribePresence(onChange) {
-    return subscribeChannel('vpa-presence-equipe', 'vpa_user_presence', onChange, 'presença da equipe');
-  }
 
   async function listCorridors() {
     const client = await init();
@@ -614,11 +637,9 @@
     updatePassword: updatePassword,
     signOut: signOut,
     getProfile: getProfile,
-    listCorridors: listCorridors,
-    createCorridor: createCorridor,
-    deactivateCorridor: deactivateCorridor,
-    updateCorridorName: updateCorridorName,
     uploadProductPhoto: uploadProductPhoto,
+    listCorridors: listCorridors,
+    updateCorridorName: updateCorridorName,
     heartbeatPresence: heartbeatPresence,
     listTeamMembers: listTeamMembers,
     updateUserRole: updateUserRole,
@@ -639,10 +660,12 @@
     listBatidas: listBatidas,
     subscribeBatidas: subscribeBatidas,
     subscribeProducts: subscribeProducts,
-    subscribePromotorProducts: subscribePromotorProducts,
-    subscribeRebaixaItems: subscribeRebaixaItems,
+    subscribeTemporaryBatchItems: subscribeTemporaryBatchItems,
     subscribeCorridors: subscribeCorridors,
     subscribePresence: subscribePresence,
+    subscribeProfile: subscribeProfile,
+    subscribePromotorProducts: subscribePromotorProducts,
+    subscribeRebaixaItems: subscribeRebaixaItems,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,

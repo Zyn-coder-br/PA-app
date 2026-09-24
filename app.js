@@ -371,8 +371,9 @@ let rebaixaInsertTimer = null;
 let rebaixaCompletionTimer = null;
 let rebaixaCompletionNoticeShown = false;
 let presenceTimer = null;
-let teamPresenceRefreshTimer = null;
 let teamAdminRefreshTimer = null;
+let teamRealtimeRefreshTimer = null;
+let pendingProductPhotoFile = null;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -489,7 +490,7 @@ function localProductFromCloud(row) {
     ean: row.ean || '',
     company: row.company || '',
     location: row.location || '',
-    photo: row.photo_url || meta.photo || '',
+    photo: row.photo_url || '',
     corridorId: corridor?.id || null,
     corridorNumber: corridor?.number || null,
     expiry: row.expiration_date || '',
@@ -538,7 +539,7 @@ function localProductFromTemporary(row) {
     piqueTipo: meta.piqueTipo || null,
     isTemporaryBatchItem: true,
     syncPending: false,
-    photo: meta.photo || ''
+    photo: row.photo_url || ''
   };
 }
 
@@ -647,7 +648,7 @@ function mergeCloudProductEvent(payload) {
         origemCadastro: cloud.origemCadastro || previous.origemCadastro || 'nuvem',
         categoriaCadastro: cloud.categoriaCadastro || previous.categoriaCadastro || 'general',
         syncPending: false,
-        photo: previous.photo || ''
+        photo: cloud.photo || previous.photo || ''
       };
     } else data.products.push({ ...cloud, syncPending: false });
   }
@@ -785,6 +786,7 @@ async function mergeCloudBatidas(shouldRender = true) {
       localById.set(String(row.id), merged);
     });
     data.batches = Array.from(localById.values()).sort((a, b) => String(b.startedAt || b.date || '').localeCompare(String(a.startedAt || a.date || '')));
+    syncCorridorLastChecksFromBatches();
     await save();
     if (shouldRender) render();
   } catch (error) {
@@ -902,6 +904,42 @@ async function bindTeamAuthListener() {
   }
 }
 
+function notifyTemporaryBatchItemEvent(payload) {
+  mergeCloudTemporaryBatchItems(true).catch((error) => console.warn('[VPA] Atualização dos itens temporários da batida:', error));
+}
+
+function notifyCorridorEvent(payload) {
+  mergeCloudCorridors(true).catch((error) => console.warn('[VPA] Atualização dos corredores:', error));
+}
+
+function scheduleAdminTeamRefresh() {
+  if (!isAdministrator()) return;
+  window.clearTimeout(teamRealtimeRefreshTimer);
+  teamRealtimeRefreshTimer = window.setTimeout(() => {
+    teamRealtimeRefreshTimer = null;
+    loadAdminTeamMembers();
+  }, 250);
+}
+
+function notifyPresenceEvent(payload) {
+  scheduleAdminTeamRefresh();
+}
+
+function notifyProfileEvent(payload) {
+  const row = payload?.new || payload?.record || {};
+  if (teamRealtimeUserId && row.id && String(row.id) === String(teamRealtimeUserId)) {
+    window.VPASupabase?.getProfile?.(teamRealtimeUserId).then((profile) => {
+      if (!profile) return;
+      window.VPA_PROFILE = profile;
+      applyProfileProtection(profile);
+      render();
+      if (profile.role === 'promotor') {
+        showTeamToast('🔒 Seu acesso foi alterado para Promotor PA.', 'warning');
+      }
+    }).catch((error) => console.warn('[VPA] Atualização do perfil em tempo real:', error));
+  }
+}
+
 function notifyPromotorProductEvent(payload) {
   const eventType = payload?.eventType || payload?.event || 'UPDATE';
   const row = payload?.new || payload?.record || payload?.old || {};
@@ -917,17 +955,11 @@ function isAdministrator() {
 function roleLabel(role) {
   return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }[role] || role || 'Usuário');
 }
-function notifyCorridorEvent(payload) {
-  mergeCloudCorridors(true).catch((error) => console.warn('[VPA] Atualização de corredores:', error));
-  const type = payload?.eventType || payload?.event || 'UPDATE';
-  showTeamToast(type === 'DELETE' ? '🗑 Corredor removido da estrutura compartilhada.' : '🔄 Estrutura de corredores atualizada na nuvem.', 'success');
-}
-
 async function mergeCloudCorridors(shouldRender = true) {
   if (!window.VPASupabase?.listCorridors || !window.VPASupabase.isConfigured()) return;
   try {
     const rows = await window.VPASupabase.listCorridors();
-    if (!Array.isArray(rows)) return;
+    if (!Array.isArray(rows) || !rows.length) return;
     const localByNumber = new Map(data.corridors.map((c) => [Number(c.number), c]));
     data.corridors = rows.map((row) => {
       const local = localByNumber.get(Number(row.corridor_number)) || {};
@@ -941,8 +973,7 @@ async function startPresenceHeartbeat() {
   if (presenceTimer) return;
   const beat = () => window.VPASupabase?.heartbeatPresence?.().catch((error) => console.warn('[VPA] Presença:', error.message || error));
   await beat();
-  presenceTimer = window.setInterval(beat, 60000);
-  if (!teamPresenceRefreshTimer) teamPresenceRefreshTimer = window.setInterval(() => { if (isAdministrator() && $('adminTeamList')) loadAdminTeamMembers(); }, 30000);
+  presenceTimer = window.setInterval(beat, 30000);
 }
 async function loadAdminTeamMembers() {
   const target = $('adminTeamList');
@@ -960,10 +991,6 @@ async function loadAdminTeamMembers() {
       catch (error) { showTeamToast('⚠️ Não foi possível alterar a categoria.', 'warning'); console.warn('[VPA] Alteração de categoria:', error); }
     }));
   } catch (error) { target.innerHTML = '<div class="empty">Não foi possível carregar os usuários. Execute a migração administrativa no Supabase.</div>'; console.warn('[VPA] Usuários:', error.message || error); }
-}
-
-function notifyPresenceEvent() {
-  if (isAdministrator() && $('adminTeamList')) loadAdminTeamMembers();
 }
 
 async function initTeamRealtime() {
@@ -987,13 +1014,20 @@ async function initTeamRealtime() {
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
+    const temporaryBatchChannel = await window.VPASupabase.subscribeTemporaryBatchItems(notifyTemporaryBatchItemEvent);
     const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
     const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
-    const corridorsChannel = await window.VPASupabase.subscribeCorridors(notifyCorridorEvent);
-    const presenceChannel = await window.VPASupabase.subscribePresence(notifyPresenceEvent);
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, corridors: corridorsChannel, presence: presenceChannel };
+    const corridorChannel = await window.VPASupabase.subscribeCorridors(notifyCorridorEvent);
+    const presenceChannel = isAdministrator() ? await window.VPASupabase.subscribePresence(notifyPresenceEvent) : null;
+    const profileChannel = await window.VPASupabase.subscribeProfile(teamRealtimeUserId, notifyProfileEvent);
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, temporaryBatch: temporaryBatchChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, corridors: corridorChannel, presence: presenceChannel, profile: profileChannel };
     teamRealtimeActive = true;
     await startPresenceHeartbeat();
+    if (isAdministrator()) {
+      loadAdminTeamMembers();
+      window.clearInterval(teamAdminRefreshTimer);
+      teamAdminRefreshTimer = window.setInterval(() => loadAdminTeamMembers(), 30000);
+    }
     showTeamToast('🟢 Equipe online: batidas e corredores compartilhados ativados.', 'success');
    } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
@@ -1137,6 +1171,7 @@ function render() {
   bind();
 }
 function openProduct(productId = null, forceManual = false) {
+  pendingProductPhotoFile = null;
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
   const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
@@ -1349,41 +1384,8 @@ function showCorridors() {
   $('corridorsList').innerHTML = data.corridors.slice().sort((a,b) => a.number-b.number).map((c) => `<div class="corridor-view-row"><div><strong>${c.number}. ${esc(c.name || 'Sem identificação')}</strong><small>${c.lastCheck ? 'Última: ' + fmt(c.lastCheck) : 'Nunca conferido'}</small></div></div>`).join('');
   dialog.showModal();
 }
-async function createSharedCorridor() {
-  if (!isAdministrator()) return;
-  const name = window.prompt('Nome do novo corredor:', 'Corredor novo');
-  if (!name || !name.trim()) return;
-  try {
-    if (!window.VPASupabase?.createCorridor) throw new Error('Rotina de criação não disponível.');
-    await window.VPASupabase.createCorridor(name.trim());
-    await mergeCloudCorridors(false);
-    openCorridorManager();
-    render();
-    showTeamToast('☁️ Corredor criado e compartilhado.', 'success');
-  } catch (error) {
-    showTeamToast('⚠️ Não foi possível criar o corredor.', 'warning');
-    console.warn('[VPA] Criação de corredor:', error);
-  }
-}
-async function deleteSharedCorridor(cloudId) {
-  if (!isAdministrator()) return;
-  if (!(await askConfirm('Excluir corredor?', 'O corredor será desativado para toda a equipe. O histórico será preservado.'))) return;
-  try {
-    if (!window.VPASupabase?.deactivateCorridor) throw new Error('Rotina de exclusão não disponível.');
-    await window.VPASupabase.deactivateCorridor(cloudId);
-    await mergeCloudCorridors(false);
-    openCorridorManager();
-    render();
-    showTeamToast('☁️ Corredor desativado para toda a equipe.', 'success');
-  } catch (error) {
-    showTeamToast('⚠️ Não foi possível excluir o corredor.', 'warning');
-    console.warn('[VPA] Exclusão de corredor:', error);
-  }
-}
-
 function openCorridorManager() {
-  $('corridorEditList').innerHTML = data.corridors.slice().sort((a,b) => a.number-b.number).map((c) => `<div class="corridor-edit-row"><strong>Corredor ${c.number}</strong><label>Nome do corredor<input data-corridor-name="${c.id}" value="${esc(c.name || '')}" maxlength="80"></label><button type="button" class="secondary" data-corridor-delete="${esc(c.cloudId || c.id)}">Excluir</button></div>`).join('');
-  document.querySelectorAll('[data-corridor-delete]').forEach((button) => button.addEventListener('click', () => deleteSharedCorridor(button.dataset.corridorDelete)));
+  $('corridorEditList').innerHTML = data.corridors.slice().sort((a,b) => a.number-b.number).map((c) => `<div class="corridor-edit-row"><strong>Corredor ${c.number}</strong><label>Nome do corredor<input data-corridor-name="${c.id}" value="${esc(c.name || '')}" maxlength="80"></label></div>`).join('');
   $('corridorManagerDialog').showModal();
 }
 function currentProductSelection() {
@@ -1927,7 +1929,7 @@ function bind() {
   $('closeScanner')?.addEventListener('click', closeScanner);
   $('closePhotoDialog')?.addEventListener('click', () => $('photoDialog').close());
   document.querySelectorAll('[data-open-photo]').forEach((b) => b.addEventListener('click', () => openPhoto(b.dataset.openPhoto)));
-  $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
+  $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; pendingProductPhotoFile = file; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
@@ -1976,8 +1978,6 @@ function bind() {
   $('restoreBtn')?.addEventListener('click', restoreBackup);
   $('corridorsBtn')?.addEventListener('click', showCorridors);
   $('manageCorridorsBtn')?.addEventListener('click', openCorridorManager);
-  $('addCorridorBtn')?.addEventListener('click', createSharedCorridor);
-  document.querySelectorAll('[data-corridor-delete]').forEach((button) => button.addEventListener('click', () => deleteSharedCorridor(button.dataset.corridorDelete)));
   $('closeCorridorsDialog')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorsDialogBottom')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorManagerDialog')?.addEventListener('click', () => $('corridorManagerDialog').close());
@@ -2043,6 +2043,17 @@ $('productForm').addEventListener('submit', async (e) => {
     : (!existing ? activeBatch() : null);
   const isNew = !existing;
   const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
+  let photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
+  if (pendingProductPhotoFile && window.VPASupabase?.uploadProductPhoto) {
+    try {
+      showTeamToast('☁️ Enviando foto para a nuvem...', 'info');
+      photoCloudUrl = await window.VPASupabase.uploadProductPhoto(pendingProductPhotoFile, id);
+    } catch (error) {
+      console.error('[VPA] Upload da foto do produto falhou:', error);
+      showTeamToast('⚠️ A foto não foi enviada para a nuvem. O produto não será publicado com foto compartilhada.', 'warning');
+      return;
+    }
+  }
   const product = {
     id,
     name: $('name').value.trim(),
@@ -2055,7 +2066,8 @@ $('productForm').addEventListener('submit', async (e) => {
     batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
     origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
     categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
-    photo: $('photoData').value || existing?.photo || '',
+    photo: photoCloudUrl || $('photoData').value || existing?.photo || '',
+    photoCloudUrl,
     tag: existing?.tag || '',
     // Regra definitiva: qualquer produto salvo dentro de uma batida aberta
     // vai exclusivamente para a tabela temporária, nunca para products.
@@ -2063,12 +2075,10 @@ $('productForm').addEventListener('submit', async (e) => {
     // Cada opção envia o produto somente para sua lista correspondente.
     fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
     promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
-    syncPending: true
+    syncPending: true,
+    batchStartedAt: batch?.startedAt || existing?.batchStartedAt || null,
+    batchNotes: batch?.notes || existing?.batchNotes || null
   };
-  if (product.photo && String(product.photo).startsWith('data:') && window.VPASupabase?.uploadProductPhoto && window.VPASupabase.isConfigured()) {
-    try { product.photo = await window.VPASupabase.uploadProductPhoto(product.id, product.photo); }
-    catch (error) { showTeamToast('⚠️ Não foi possível enviar a foto para a nuvem. O produto não foi publicado.', 'warning'); console.warn('[VPA] Upload da foto:', error); return; }
-  }
   if (existing) Object.assign(existing, product); else data.products.push(product);
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
@@ -2101,6 +2111,7 @@ $('productForm').addEventListener('submit', async (e) => {
     console.error('[VPA] Sincronização automática do produto falhou:', error);
     showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
+  pendingProductPhotoFile = null;
   $('productDialog').close();
   $('corridor').disabled = false;
   render();

@@ -101,7 +101,7 @@
 </dialog>
 <footer class="vpa-credits">Criado por <strong>Ramon do N. Gomes</strong> · Matrícula 6024513</footer>
 <input id="restoreInput" type="file" accept="application/json" hidden>
-<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div class="toolbar"><button type="button" class="secondary" id="addCorridorBtn">＋ Criar corredor</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = {
+<dialog id="corridorsDialog"><div class="dialog-head"><div><div class="eyebrow">ESTRUTURA</div><h2>Corredores cadastrados</h2></div><button type="button" id="closeCorridorsDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorsList" class="corridors-list"></div><div class="dialog-actions"><button type="button" class="primary" id="closeCorridorsDialogBottom">Fechar</button></div></dialog><dialog id="corridorManagerDialog"><form id="corridorManagerForm"><div class="dialog-head"><div><div class="eyebrow">CONFIGURAÇÃO</div><h2>Editar corredores</h2><p class="dialog-help">Altere o nome de cada corredor. O histórico será preservado.</p></div><button type="button" id="closeCorridorManagerDialog" class="close-btn" aria-label="Fechar">×</button></div><div id="corridorEditList" class="corridor-edit-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="cancelCorridorManager">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div></form></dialog><script>window.VPA_SUPABASE_CONFIG = {
   url: "https://vwzdzmfewqkzaokdwzyj.supabase.co",
   anonKey: "sb_publishable_Sw0O5MWTbjr11gnhnDZQPQ_DHnzUD0u"
 };</script>
@@ -147,7 +147,12 @@
     try {
       currentProfile = await window.VPASupabase.getProfile(user.id);
       if (currentProfile && currentProfile.active === false) { message('Seu usuário está aguardando liberação do administrador.'); await window.VPASupabase.signOut(); showLogin(); return null; }
-      if (currentProfile && currentProfile.role === 'promotor') { message('Este usuário possui acesso exclusivo ao Promotor PA.'); await window.VPASupabase.signOut(); showLogin(); return null; }
+      if (currentProfile && String(currentProfile.role || '').toLowerCase() === 'promotor') {
+        message('Este usuário é Promotor. O acesso deve ser feito pelo aplicativo Promotor PA.');
+        await window.VPASupabase.signOut();
+        showLogin();
+        return null;
+      }
       setLoggedUser(user, currentProfile); applyProfileProtection(currentProfile); return currentProfile;
     } catch (error) { console.warn('[VPA] Não foi possível carregar o perfil:', error); message('Login realizado, mas não foi possível carregar seu perfil.'); setLoggedUser(user, null); applyProfileProtection(null); return null; }
   }
