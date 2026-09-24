@@ -282,7 +282,6 @@ function dashboard() {
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   const filter = productFilter;
-  if (filter === 'rebaixa') return rebaixaPage();
   const allVisible = visibleProducts();
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
@@ -293,28 +292,14 @@ function products() {
     const q = searchValue.trim().toLowerCase();
     list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
   }
-  const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
-  const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
-  const resolved = list.filter((p) => p.status === 'resolvido').length;
-  const fefoCount = list.filter((p) => p.fefo).length;
-  const productFilters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
-  return `<section class="products-page">
-    <div class="products-hero">
-      <div class="products-hero-copy">
-        <div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div>
-        <h2>Controle de produtos</h2>
-        <p>Consulte, organize e acompanhe os produtos registrados na operação.</p>
-      </div>
-    </div>
-    <div class="products-overview">
-      <div class="product-stat-card"><div class="product-stat-icon green">▦</div><div><strong>${list.length}</strong><span>Produtos na lista</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon red">!</div><div><strong>${critical}</strong><span>Críticos · até 7 dias</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon amber">◷</div><div><strong>${attention}</strong><span>Em atenção</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon blue">✓</div><div><strong>${resolved}</strong><span>Resolvidos</span></div></div>
-    </div>
-    <div class="products-section-heading"><div><div class="eyebrow">CATÁLOGO OPERACIONAL</div><h3>Seus produtos</h3><p>Filtre por categoria ou pesquise por nome, EAN e marca.</p></div><span class="products-mini-count">${fefoCount} FEFO</span></div>
-    <div class="products-filter-panel">
-      <div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>
+  const rebaixaMode = filter === 'rebaixa';
+  const rebaixaCount = data.rebaixaItems.length;
+  const statsList = rebaixaMode ? data.rebaixaItems : list;
+  const critical = statsList.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const attention = statsList.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const resolved = rebaixaMode ? 0 : list.filter((p) => p.status === 'resolvido').length;
+  const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
+  const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
@@ -330,7 +315,21 @@ function products() {
           <button type="button" class="secondary" id="floatingQuickTag">🏷 Adicionar tag</button>
           <button type="button" class="secondary danger-btn" id="floatingDeleteSelected">🗑 Excluir selecionados</button>
         </div>
-      </div>
+      </div>`;
+  return `<section class="products-page">
+    <div class="products-hero">
+      <div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div><h2>Controle de produtos</h2><p>Consulte, organize e acompanhe os produtos registrados na operação.</p></div>
+    </div>
+    <div class="products-overview">
+      <div class="product-stat-card"><div class="product-stat-icon green">▦</div><div><strong>${statsList.length}</strong><span>Produtos na lista</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon red">!</div><div><strong>${critical}</strong><span>Críticos · até 7 dias</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon amber">◷</div><div><strong>${attention}</strong><span>Em atenção</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon blue">✓</div><div><strong>${resolved}</strong><span>Resolvidos</span></div></div>
+    </div>
+    <div class="products-section-heading"><div><div class="eyebrow">CATÁLOGO OPERACIONAL</div><h3>${rebaixaMode ? 'Rebaixa Automática' : 'Seus produtos'}</h3><p>${rebaixaMode ? 'Lista compartilhada de produtos para rebaixa, organizada por vencimento.' : 'Filtre por categoria ou pesquise por nome, EAN e marca.'}</p></div><span class="products-mini-count">${rebaixaMode ? rebaixaCount + ' itens' : fefoCount + ' FEFO'}</span></div>
+    <div class="products-filter-panel">
+      <div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>
+      ${panelContent}
     </div>
   </section>`;
 }
@@ -367,6 +366,10 @@ let teamRealtimeStarting = null;
 let teamRealtimeUserId = null;
 let teamNotificationCount = 0;
 const completedBatchNotifications = new Map();
+let rebaixaInsertBuffer = new Map();
+let rebaixaInsertTimer = null;
+let rebaixaCompletionTimer = null;
+let rebaixaCompletionNoticeShown = false;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -673,8 +676,9 @@ async function mergeCloudRebaixaItems(shouldRender = true) {
   try {
     const rows = await window.VPASupabase.listRebaixaItems();
     const remote = rows.map(localRebaixaFromCloud).filter((item) => item.status !== 'completed');
-    // Não apagar uma lista local antiga se a tabela ainda estiver vazia no primeiro acesso.
-    if (remote.length || !data.rebaixaItems.length) data.rebaixaItems = remote;
+    // O Supabase é a fonte oficial: quando a consulta retorna vazia,
+    // a lista local também precisa ser esvaziada (inclusive após a última rebaixa).
+    data.rebaixaItems = remote;
     data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
     await save();
     if (shouldRender) render();
@@ -692,6 +696,46 @@ async function refreshRebaixaOnReturn() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRebaixaOnReturn(); });
 window.addEventListener('focus', refreshRebaixaOnReturn);
 
+function flushRebaixaInsertNotifications() {
+  rebaixaInsertTimer = null;
+  const count = rebaixaInsertBuffer.size;
+  rebaixaInsertBuffer.clear();
+  if (!count) return;
+  const message = `Nova lista de rebaixa - ${count} novo${count === 1 ? '' : 's'} item${count === 1 ? '' : 'ns'}`;
+  teamNotificationCount += 1;
+  showTeamToast('🔔 ' + message, 'team');
+  showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-new-list');
+}
+
+function scheduleRebaixaInsertNotification(row) {
+  if (!row?.id) return;
+  rebaixaInsertBuffer.set(String(row.id), row);
+  window.clearTimeout(rebaixaInsertTimer);
+  rebaixaInsertTimer = window.setTimeout(flushRebaixaInsertNotifications, 900);
+}
+
+function scheduleRebaixaCompletionNotification() {
+  window.clearTimeout(rebaixaCompletionTimer);
+  rebaixaCompletionTimer = window.setTimeout(async () => {
+    rebaixaCompletionTimer = null;
+    try {
+      const rows = await window.VPASupabase?.listRebaixaItems?.();
+      const remaining = Array.isArray(rows) ? rows.filter((row) => row.status !== 'completed') : [];
+      if (remaining.length === 0 && !rebaixaCompletionNoticeShown) {
+        rebaixaCompletionNoticeShown = true;
+        const message = 'Rebaixa Automática Concluída';
+        teamNotificationCount += 1;
+        showTeamToast('🔔 ' + message, 'team');
+        showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-completed');
+      } else if (remaining.length > 0) {
+        rebaixaCompletionNoticeShown = false;
+      }
+    } catch (error) {
+      console.warn('[VPA] Não foi possível verificar a conclusão da rebaixa:', error.message || error);
+    }
+  }, 900);
+}
+
 function notifyRebaixaEvent(payload) {
   const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
   const row = payload?.new || payload?.record || payload?.old || {};
@@ -701,9 +745,16 @@ function notifyRebaixaEvent(payload) {
     return;
   }
   mergeCloudRebaixaItems(true).catch((error) => console.warn('[VPA] Atualização da Rebaixa Automática:', error));
-  const title = eventType === 'DELETE' ? 'Rebaixa Automática atualizada' : row.status === 'completed' ? 'Rebaixa Automática concluída' : 'Nova lista de Rebaixa Automática';
-  showTeamToast('🔔 ' + title, 'team');
-  showRealtimeNotification('Vencimento PA', title, 'vpa-rebaixa-' + (row.id || Date.now()));
+  // INSERTs de uma mesma planilha são agrupados em um único aviso.
+  if (eventType === 'INSERT' && row.status !== 'completed') {
+    rebaixaCompletionNoticeShown = false;
+    scheduleRebaixaInsertNotification(row);
+    return;
+  }
+  // UPDATEs individuais não geram spam. Só avisamos quando a lista inteira acabou.
+  if (eventType === 'UPDATE' && row.status === 'completed') {
+    scheduleRebaixaCompletionNotification();
+  }
 }
 
 async function mergeCloudBatidas(shouldRender = true) {
@@ -973,12 +1024,7 @@ function rebaixaPage() {
   const q = searchValue.trim().toLowerCase();
   const items = data.rebaixaItems.slice().sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31'))).filter((item) => !q || `${item.loja} ${item.plu} ${item.name} ${item.quantity} ${item.expiry} ${item.value}`.toLowerCase().includes(q));
   const empty = !data.rebaixaItems.length;
-  return `<section class="products-page">
-    <div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · REBAIXAS</div><h2>Rebaixa Automática</h2><p>Lista independente para conferência e atualização de preços. Os itens são organizados pela data de vencimento.</p></div></div>
-    <div class="products-section-heading"><div><div class="eyebrow">LISTA DE REBAIXAS</div><h3>Produtos para rebaixar</h3><p>Importe uma planilha Excel e marque cada item como preço alterado após concluir a rebaixa.</p></div><span class="products-mini-count">${data.rebaixaItems.length} itens</span></div>
-    <div class="products-filter-panel"><div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div>
-    <div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div></div>
-  </section>`;
+  return `<div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div><div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div>`;
 }
 function reports() {
   const monthKey = today().slice(0, 7);
@@ -1014,13 +1060,7 @@ function render() {
   const pageContent = view === 'dashboard' ? dashboard() : view === 'products' ? products() : view === 'batches' ? batches() : view === 'expiries' ? expiries() : view === 'pending' ? pending() : view === 'reports' ? reports() : settings();
   const standardViews = new Set(['batches', 'expiries', 'pending', 'reports', 'settings']);
   $('view').innerHTML = standardViews.has(view) ? `<div class="standard-page">${pageContent}</div>` : pageContent;
-  const floatingPanel = $('floatingNavPanel');
-  if (floatingPanel) {
-    floatingPanel.innerHTML = floatingItems();
-    // Trocar de tela ou de subaba nunca deve deixar o menu flutuante aberto
-    // sobre o conteúdo, evitando a duplicação visual da navegação de Produtos.
-    floatingPanel.classList.remove('open');
-  }
+  $('floatingNavPanel').innerHTML = floatingItems();
   // O botão de cadastro é recriado a cada renderização; vincular diretamente aqui evita que ele fique sem evento.
   const newProductButton = $('newProduct');
   if (newProductButton) newProductButton.onclick = (event) => { event.preventDefault(); openProduct(null, true); };
@@ -1549,20 +1589,15 @@ async function markRebaixaDone(id) {
   try {
     if (window.VPASupabase?.completeRebaixaItem && window.VPASupabase.isConfigured()) {
       await window.VPASupabase.completeRebaixaItem(id);
-      // Retira imediatamente da tela local. A sincronização seguinte apenas
-      // reconcilia o estado com a lista compartilhada do Supabase.
-      data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
-      try {
-        await mergeCloudRebaixaItems(false);
-      } catch (syncError) {
-        console.warn('[VPA] Item concluído, mas a reconciliação da lista falhou:', syncError);
-      }
+      await mergeCloudRebaixaItems(false);
     } else {
       data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
     }
     await save();
-    showTeamToast(`✅ ${item.name} marcado como preço alterado.`, 'success');
-    if (!data.rebaixaItems.length) showTeamToast('📣 Rebaixas automática realizada.', 'success');
+    if (!data.rebaixaItems.length) {
+      rebaixaCompletionNoticeShown = true;
+      showTeamToast('📣 Rebaixa Automática Concluída.', 'success');
+    }
     render();
   } catch (error) {
     console.error('[VPA] Falha ao concluir rebaixa:', error);

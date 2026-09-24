@@ -1,14 +1,16 @@
 {
-  "version": "V41",
+  "version": "V42",
   "app": "Vencimento PA",
   "published": "2026-09-24",
-  "feature": "Rebaixa Automática compartilhada no Supabase com sincronização Realtime",
-  "name": "V41 - Rebaixa compartilhada corrigida",
-  "updatedAt": "2026-09-23",
+  "feature": "Rebaixa Automática compartilhada com notificações agrupadas e painel único",
+  "name": "V42 - Rebaixa sem spam e painel unificado",
+  "updatedAt": "2026-09-24",
   "notes": [
-    "Corrige janela de importação aparecendo fora do modal.",
-    "Remove card duplicado de navegação de produtos.",
-    "Valida confirmação dos itens no Supabase após importação.",
-    "Atualiza a lista de rebaixas ao retornar ao aplicativo."
+    "Agrupa INSERTs da mesma importação em uma única notificação com a quantidade de novos itens.",
+    "Não envia notificação para cada alteração individual de preço.",
+    "Notifica Rebaixa Automática Concluída somente quando não restam itens pendentes.",
+    "Usa o Supabase como fonte oficial e limpa a lista local quando a consulta remota retorna vazia.",
+    "Mantém Todos, Produtos FEFO, Produtos Promotores e Rebaixa Automática dentro de um único painel de produtos.",
+    "Remove o painel duplicado criado anteriormente pela página independente de rebaixa."
   ]
 }
