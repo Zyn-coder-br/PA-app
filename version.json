@@ -1,5 +1,5 @@
 {
-  "version": "V42",
+  "version": "V41",
   "app": "Vencimento PA",
   "published": "2026-09-24",
   "feature": "Rebaixa Automática compartilhada no Supabase com sincronização Realtime",
@@ -10,6 +10,5 @@
     "Remove card duplicado de navegação de produtos.",
     "Valida confirmação dos itens no Supabase após importação.",
     "Atualiza a lista de rebaixas ao retornar ao aplicativo."
-  ],
-  "build": "2026-09-24"
+  ]
 }

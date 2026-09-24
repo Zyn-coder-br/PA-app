@@ -168,16 +168,49 @@
   };
 
   async function uploadProductPhoto(dataUrl, productId) {
+    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || '';
     const client = await init();
-    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || null;
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada para enviar a foto.');
     const response = await fetch(dataUrl);
     const blob = await response.blob();
     const extension = (blob.type || 'image/jpeg').split('/')[1] || 'jpeg';
-    const path = `${productId}.${extension}`;
-    const uploaded = await client.storage.from('product-photos').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
-    if (uploaded.error) throw uploaded.error;
-    const publicUrl = client.storage.from('product-photos').getPublicUrl(path);
-    return publicUrl?.data?.publicUrl || null;
+    const path = `${session.user.id}/${productId}.${extension}`;
+    const upload = await client.storage.from('product-photos').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg', cacheControl: '3600' });
+    if (upload.error) throw upload.error;
+    const publicResult = client.storage.from('product-photos').getPublicUrl(path);
+    return publicResult?.data?.publicUrl || '';
+  }
+
+  async function listCorridors() {
+    const client = await init();
+    const result = await client.from('corridors').select('id, corridor_number, name, active, updated_at').order('corridor_number', { ascending: true });
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function upsertCorridor(corridor) {
+    const client = await init();
+    const number = Number(corridor?.number ?? corridor?.corridor_number);
+    if (!Number.isFinite(number)) throw new Error('Número de corredor inválido.');
+    const name = String(corridor?.name || `Corredor ${number}`).trim();
+    const existing = await client.from('corridors').select('id').eq('corridor_number', number).maybeSingle();
+    if (existing.error) throw existing.error;
+    const result = existing.data
+      ? await client.from('corridors').update({ name, active: corridor.active !== false }).eq('id', existing.data.id).select().single()
+      : await client.from('corridors').insert({ corridor_number: number, name, active: corridor.active !== false }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function syncCorridors(corridors) {
+    const list = Array.isArray(corridors) ? corridors : [];
+    const results = { total: list.length, synced: 0, failed: 0, errors: [] };
+    for (const corridor of list) {
+      try { await upsertCorridor(corridor); results.synced += 1; }
+      catch (error) { results.failed += 1; results.errors.push({ number: corridor?.number, message: error?.message || 'Falha' }); }
+    }
+    return results;
   }
 
   async function syncProduct(product, corridorNumber) {
@@ -186,8 +219,6 @@
     if (!session || !session.user) throw new Error('Nenhuma sessão autenticada encontrada.');
     if (!product || !product.id) throw new Error('Produto sem identificador local.');
     if (!Number.isFinite(Number(corridorNumber))) throw new Error('Corredor local sem número válido.');
-    let cloudPhoto = null;
-    if (product.photo) { cloudPhoto = await uploadProductPhoto(product.photo, product.id); }
 
     const corridorResult = await client
       .from('corridors')
@@ -220,7 +251,8 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || null,
         categoriaCadastro: product.categoriaCadastro || null,
-        tag: product.tag || ''
+        tag: product.tag || '',
+        photoUrl: product.photoUrl || product.photo || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -269,7 +301,8 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || 'batida',
         categoriaCadastro: product.categoriaCadastro || 'general',
-        tag: product.tag || ''
+        tag: product.tag || '',
+        photoUrl: product.photoUrl || product.photo || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -385,75 +418,6 @@
       }
     }
     return results;
-  }
-
-
-
-  async function setPresence(online) {
-    const client = await init();
-    const session = await getSession();
-    if (!session?.user?.id) return null;
-    const result = await client.from('team_presence').upsert({ user_id: session.user.id, online: Boolean(online), last_seen_at: new Date().toISOString() }, { onConflict: 'user_id' }).select().single();
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-  async function listTeamUsers() {
-    const client = await init();
-    const result = await client.from('team_user_overview').select('id, full_name, role, active, online, last_seen_at').order('full_name', { ascending: true });
-    if (result.error) throw result.error;
-    return result.data || [];
-  }
-
-  async function setUserRole(userId, role) {
-    const client = await init();
-    const result = await client.rpc('admin_set_user_role', { p_user_id: userId, p_role: role });
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-  async function subscribePresence(onChange) {
-    return subscribeChannel('vpa-team-presence', 'team_presence', onChange, 'presença da equipe');
-  }
-
-  async function subscribeCorridors(onChange) {
-    return subscribeChannel('vpa-corridors', 'corridors', onChange, 'corredores');
-  }
-
-  async function listCorridors() {
-    const client = await init();
-    const result = await client.from('corridors').select('id, corridor_number, name, active, updated_at').eq('active', true).order('corridor_number', { ascending: true });
-    if (result.error) throw result.error;
-    return result.data || [];
-  }
-
-  async function upsertCorridors(corridors) {
-    const client = await init();
-    const output = [];
-    for (const c of (Array.isArray(corridors) ? corridors : [])) {
-      const number = Number(c.number);
-      const name = String(c.name || ('Corredor ' + number)).trim();
-      if (!Number.isFinite(number) || !name) continue;
-      let result;
-      if (c.cloudId) {
-        result = await client.from('corridors').update({ corridor_number: number, name, active: c.active !== false }).eq('id', c.cloudId).select('id, corridor_number, name, active, updated_at').maybeSingle();
-      } else {
-        const existing = await client.from('corridors').select('id').eq('corridor_number', number).maybeSingle();
-        if (existing.error) throw existing.error;
-        if (existing.data?.id) result = await client.from('corridors').update({ name, active: c.active !== false }).eq('id', existing.data.id).select('id, corridor_number, name, active, updated_at').single();
-        else result = await client.from('corridors').insert({ corridor_number: number, name, active: c.active !== false }).select('id, corridor_number, name, active, updated_at').single();
-      }
-      if (result.error) throw result.error;
-      if (result.data) output.push(result.data);
-    }
-    return output;
-  }
-
-  async function deleteCorridor(id) {
-    const client = await init();
-    const result = await client.from('corridors').update({ active: false }).eq('id', id).select('id').maybeSingle();
-    if (result.error) throw result.error;
-    return result.data;
   }
 
   async function listProducts() {
@@ -576,6 +540,10 @@
     return subscribeChannel('vpa-rebaixa-items', 'rebaixa_items', onChange, 'Rebaixa Automática');
   }
 
+  async function subscribeCorridors(onChange) {
+    return subscribeChannel('vpa-corridors', 'corridors', onChange, 'corredores');
+  }
+
   async function deletePromotorProduct(productId) {
     const client = await init();
     const result = await client.rpc('delete_promotor_product_from_vpa', { p_product_id: productId });
@@ -621,6 +589,9 @@
     signOut: signOut,
     getProfile: getProfile,
     uploadProductPhoto: uploadProductPhoto,
+    listCorridors: listCorridors,
+    upsertCorridor: upsertCorridor,
+    syncCorridors: syncCorridors,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
     syncTemporaryBatchItem: syncTemporaryBatchItem,
@@ -639,15 +610,8 @@
     subscribeBatidas: subscribeBatidas,
     subscribeProducts: subscribeProducts,
     subscribePromotorProducts: subscribePromotorProducts,
-    listCorridors: listCorridors,
-    setPresence: setPresence,
-    listTeamUsers: listTeamUsers,
-    setUserRole: setUserRole,
-    subscribePresence: subscribePresence,
-    subscribeCorridors: subscribeCorridors,
-    upsertCorridors: upsertCorridors,
-    deleteCorridor: deleteCorridor,
     subscribeRebaixaItems: subscribeRebaixaItems,
+    subscribeCorridors: subscribeCorridors,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,

@@ -976,7 +976,3 @@ body{
 
 /* V41 - Modal de rebaixa fechado não ocupa espaço na página. */
 .rebaixa-import-dialog:not([open]){display:none!important}
-
-/* V42 - paginação compacta do catálogo */
-.pagination { display:flex; align-items:center; justify-content:center; gap:12px; padding:14px 0 4px; color:var(--muted, #71827b); font-size:.9rem; }
-.pagination button:disabled { opacity:.45; cursor:not-allowed; }

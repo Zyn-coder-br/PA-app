@@ -8,8 +8,6 @@ let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
 let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
 let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') || 'all';
-let productPage = Number(localStorage.getItem('vpa-product-page') || 1);
-const PRODUCTS_PER_PAGE = 10;
 const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -61,21 +59,31 @@ function seed() {
   data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
-
 async function mergeCloudCorridors(shouldRender = true) {
   if (!window.VPASupabase?.listCorridors) return;
   try {
     const rows = await window.VPASupabase.listCorridors();
-    if (!rows.length) return;
-    const previous = new Map(data.corridors.map(c => [String(c.number), c]));
-    data.corridors = rows.map(row => {
-      const old = previous.get(String(row.corridor_number)) || {};
-      return { ...old, id: old.id || uid(), cloudId: row.id, number: Number(row.corridor_number), name: row.name || old.name || ('Corredor ' + row.corridor_number), active: row.active !== false, lastCheck: old.lastCheck || null };
+    if (!Array.isArray(rows)) return;
+    const byNumber = new Map(rows.map((row) => [Number(row.corridor_number), row]));
+    data.corridors = data.corridors
+      .filter((local) => byNumber.has(Number(local.number)))
+      .map((local) => {
+        const cloud = byNumber.get(Number(local.number));
+        return { ...local, cloudId: cloud.id, number: Number(cloud.corridor_number), name: cloud.name || local.name, active: cloud.active !== false, cloudUpdatedAt: cloud.updated_at || null };
+      });
+    rows.forEach((row) => {
+      if (!data.corridors.some((local) => Number(local.number) === Number(row.corridor_number))) {
+        data.corridors.push({ id: uid(), cloudId: row.id, number: Number(row.corridor_number), name: row.name || `Corredor ${row.corridor_number}`, lastCheck: null, active: row.active !== false });
+      }
     });
-    syncCorridorLastChecksFromBatches();
+    data.corridors.sort((a, b) => Number(a.number) - Number(b.number));
     await save();
     if (shouldRender) render();
-  } catch (error) { console.warn('[VPA] Não foi possível carregar corredores compartilhados:', error.message || error); }
+  } catch (error) { console.warn('[VPA] Não foi possível carregar corredores da nuvem:', error.message || error); }
+}
+
+function notifyCorridorEvent(payload) {
+  mergeCloudCorridors(true).catch((error) => console.warn('[VPA] Atualização dos corredores:', error));
 }
 
 function syncCorridorLastChecksFromBatches() {
@@ -312,10 +320,6 @@ function products() {
     const q = searchValue.trim().toLowerCase();
     list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
   }
-  list.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')) || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
-  const totalPages = Math.max(1, Math.ceil(list.length / PRODUCTS_PER_PAGE));
-  productPage = Math.min(Math.max(1, productPage), totalPages);
-  const pageItems = list.slice((productPage - 1) * PRODUCTS_PER_PAGE, productPage * PRODUCTS_PER_PAGE);
   const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
   const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
   const resolved = list.filter((p) => p.status === 'resolvido').length;
@@ -343,7 +347,7 @@ function products() {
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
-      <div class="list products-list" id="productList">${groupedProductRows(pageItems,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div><div class="pagination" aria-label="Paginação de produtos"><button type="button" class="secondary" id="productsPrev" ${productPage <= 1 ? 'disabled' : ''}>← Anterior</button><span>Página ${productPage} de ${totalPages}</span><button type="button" class="secondary" id="productsNext" ${productPage >= totalPages ? 'disabled' : ''}>Próxima →</button></div>
+      <div class="list products-list" id="productList">${groupedProductRows(list,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>
       <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
         <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">☷</button>
         <div class="bulk-actions-menu" id="bulkActionsMenu" hidden>
@@ -506,7 +510,7 @@ function localProductFromCloud(row) {
     ean: row.ean || '',
     company: row.company || '',
     location: row.location || '',
-    photo: row.photo_url || '',
+    photo: row.photo_url || meta.photoUrl || '',
     corridorId: corridor?.id || null,
     corridorNumber: corridor?.number || null,
     expiry: row.expiration_date || '',
@@ -592,7 +596,7 @@ async function mergeCloudProducts(shouldRender = true) {
         origemCadastro: cloud.origemCadastro || local?.origemCadastro || 'nuvem',
         categoriaCadastro: cloud.categoriaCadastro || local?.categoriaCadastro || 'general',
         syncPending: false,
-        photo: cloud.photo || local?.photo || ''
+        photo: local?.photo || ''
       };
     });
     // Preserva produtos externos do Promotor PA. A sincronização da tabela geral
@@ -714,8 +718,6 @@ async function refreshRebaixaOnReturn() {
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRebaixaOnReturn(); });
 window.addEventListener('focus', refreshRebaixaOnReturn);
-window.addEventListener('beforeunload', () => { updatePresence(false).catch(() => {}); });
-window.setInterval(() => { if (document.visibilityState === 'visible') updatePresence(true); }, 60000);
 
 function notifyRebaixaEvent(payload) {
   const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
@@ -893,21 +895,19 @@ async function initTeamRealtime() {
       return;
     }
     teamRealtimeUserId = session.user.id;
-    await updatePresence(true);
-    await mergeCloudCorridors(false);
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
     await mergeCloudTemporaryBatchItems(false);
     await mergeCloudPromotorProducts(false);
     await mergeCloudRebaixaItems(false);
+    await mergeCloudCorridors(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
     const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
-    const presenceChannel = await window.VPASupabase.subscribePresence(() => { renderAdminTeamPanel().catch(() => {}); });
-    const corridorsChannel = await window.VPASupabase.subscribeCorridors(() => { mergeCloudCorridors(true).catch(() => {}); });
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, presence: presenceChannel, corridors: corridorsChannel };
+    const corridorsChannel = await window.VPASupabase.subscribeCorridors(notifyCorridorEvent);
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, corridors: corridorsChannel };
     teamRealtimeActive = true;
     showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
    } catch (error) {
@@ -962,13 +962,10 @@ async function checkForAppUpdate() {
 }
 
 function settings() {
-  const role = String(window.VPA_PROFILE?.role || '').toLowerCase();
-  const isAdmin = role === 'admin' || role === 'administrador';
-  const common = `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Perfil de acesso: ${esc(window.VPA_PROFILE?.role || 'Usuário')}</p></div></div>
+  return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
   <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
-  if (!isAdmin) return common;
-  return common + `<div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração de categoria exige permissão de administrador.</p><div id="adminTeamPanel" class="list"><div class="empty">Carregando equipe…</div></div></div><div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações</div><p class="panel-sub">Ative as notificações neste aparelho para receber avisos da equipe.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas locais são sincronizados automaticamente após o login quando o banco está configurado. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1041,25 +1038,6 @@ function reports() {
     <div class="list"><div class="team-row"><span>Produtos cadastrados</span><strong>${data.products.length}</strong></div><div class="team-row"><span>Produtos separados ou resolvidos</span><strong>${separated}</strong></div><div class="team-row"><span>Produtos ainda no corredor</span><strong>${data.products.filter(p=>p.status==='corredor'&&!p.piqueConcluido).length}</strong></div><div class="team-row"><span>Produtos na área de vencimento</span><strong>${data.products.filter(p=>p.status==='vencimento'&&!p.piqueConcluido).length}</strong></div></div>
   </div>`;
 }
-
-async function renderAdminTeamPanel() {
-  const panel = $('adminTeamPanel');
-  const role = String(window.VPA_PROFILE?.role || '').toLowerCase();
-  if (!panel || !['admin', 'administrador'].includes(role) || !window.VPASupabase?.listTeamUsers) return;
-  try {
-    const users = await window.VPASupabase.listTeamUsers();
-    panel.innerHTML = users.length ? users.map(user => `<div class="team-row"><div><strong>${esc(user.full_name || 'Usuário')}</strong><div class="meta">${user.online ? '🟢 Online' : '⚪ Offline'} · ${user.last_seen_at ? fmt(String(user.last_seen_at).slice(0,10)) : 'sem registro'}</div></div><select class="company-filter" data-user-role="${esc(user.id)}"><option value="operador" ${user.role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${user.role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${user.role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${user.role === 'chefe' ? 'selected' : ''}>Gerência/Chefe</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`).join('') : '<div class="empty">Nenhum usuário encontrado.</div>';
-    panel.querySelectorAll('[data-user-role]').forEach(select => select.addEventListener('change', async () => {
-      try { await window.VPASupabase.setUserRole(select.dataset.userRole, select.value); showTeamToast('✅ Categoria do usuário atualizada.', 'success'); }
-      catch (error) { showTeamToast('⚠️ Não foi possível alterar a categoria: ' + (error.message || error), 'warning'); }
-    }));
-  } catch (error) { panel.innerHTML = `<div class="empty">Não foi possível carregar a equipe: ${esc(error.message || error)}</div>`; }
-}
-
-async function updatePresence(online) {
-  try { await window.VPASupabase?.setPresence?.(online); } catch (error) { console.warn('[VPA] Presença não sincronizada:', error.message || error); }
-}
-
 function render() {
   localStorage.setItem('vpa-view', view);
   const pageContent = view === 'dashboard' ? dashboard() : view === 'products' ? products() : view === 'batches' ? batches() : view === 'expiries' ? expiries() : view === 'pending' ? pending() : view === 'reports' ? reports() : settings();
@@ -1225,35 +1203,17 @@ async function finishBatch() {
 async function lookupEAN(ean) {
   const code = String(ean || '').replace(/\D/g, '');
   if (!code) return;
-  $('lookupMessage').textContent = 'Consultando bases online…';
-  const sources = [
-    async () => {
-      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, { headers: { Accept: 'application/json' } });
-      const result = await response.json();
-      if (result.status !== 1) return null;
-      const p = result.product || {};
-      return { name: p.product_name_pt || p.product_name || p.generic_name_pt || p.generic_name || '', image: p.image_front_url || p.image_url || '', source: 'Open Food Facts' };
-    },
-    async () => {
-      const response = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(code)}`, { headers: { Accept: 'application/json' } });
-      if (!response.ok) return null;
-      const result = await response.json();
-      const item = result.items?.[0];
-      if (!item) return null;
-      return { name: item.title || '', image: item.images?.[0] || '', source: 'UPCitemdb' };
-    }
-  ];
-  for (const source of sources) {
-    try {
-      const product = await source();
-      if (!product || (!product.name && !product.image)) continue;
-      if (!$('name').value.trim() && product.name) $('name').value = product.name;
-      if (product.image && !$('photoData').value) { $('photoData').value = product.image; $('photoPreview').innerHTML = `<img src="${esc(product.image)}" alt="Prévia do produto">`; }
-      $('lookupMessage').textContent = `Dados encontrados em ${product.source}.`;
-      return;
-    } catch (error) { console.warn('[VPA] Fonte EAN indisponível:', error.message || error); }
-  }
-  $('lookupMessage').textContent = 'Produto não encontrado nas bases online. Preencha manualmente.';
+  $('lookupMessage').textContent = 'Consultando produto na internet…';
+  try {
+    const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, { headers: { Accept: 'application/json' } });
+    const result = await response.json();
+    const product = result.status === 1 ? result.product : null;
+    if (!product) { $('lookupMessage').textContent = 'Produto não encontrado na base online. Preencha manualmente.'; return; }
+    if (!$('name').value.trim()) $('name').value = product.product_name_pt || product.product_name || product.generic_name_pt || product.generic_name || '';
+    const image = product.image_front_url || product.image_url || '';
+    if (image && !$('photoData').value) { $('photoData').value = image; $('photoPreview').innerHTML = `<img src="${esc(image)}" alt="Prévia do produto">`; }
+    $('lookupMessage').textContent = 'Dados encontrados na Open Food Facts.';
+  } catch { $('lookupMessage').textContent = 'Não foi possível consultar a internet. Você pode continuar manualmente.'; }
 }
 let scanStream = null;
 async function startScanner() {
@@ -1307,25 +1267,7 @@ function showCorridors() {
   dialog.showModal();
 }
 function openCorridorManager() {
-  $('corridorEditList').innerHTML = `<div class="toolbar"><button type="button" class="secondary" id="addCorridorInline">＋ Adicionar corredor</button></div>` + data.corridors.slice().sort((a,b) => a.number-b.number).map((c) => `<div class="corridor-edit-row"><strong>Corredor ${c.number}</strong><label>Nome do corredor<input data-corridor-name="${c.id}" value="${esc(c.name || '')}" maxlength="80"></label><button type="button" class="secondary danger-btn" data-delete-corridor="${esc(c.id)}">Excluir</button></div>`).join('');
-  $('addCorridorInline').onclick = () => {
-    const nextNumber = data.corridors.reduce((max, c) => Math.max(max, Number(c.number) || 0), 0) + 1;
-    const name = window.prompt('Nome do novo corredor:', 'Corredor ' + nextNumber);
-    if (!name) return;
-    data.corridors.push({ id: uid(), number: nextNumber, name: name.trim(), lastCheck: null, active: true });
-    openCorridorManager();
-  };
-  document.querySelectorAll('[data-delete-corridor]').forEach(button => button.onclick = async () => {
-    const corridor = data.corridors.find(c => String(c.id) === String(button.dataset.deleteCorridor));
-    if (!corridor || !window.confirm('Excluir ' + corridor.name + '?')) return;
-    if (corridor.cloudId && window.VPASupabase?.deleteCorridor) {
-      try { await window.VPASupabase.deleteCorridor(corridor.cloudId); } catch (error) { showTeamToast('⚠️ Não foi possível excluir na nuvem: ' + (error.message || error), 'warning'); return; }
-    }
-    data.corridors = data.corridors.filter(c => c.id !== corridor.id);
-    await save();
-    openCorridorManager();
-    render();
-  });
+  $('corridorEditList').innerHTML = data.corridors.slice().sort((a,b) => a.number-b.number).map((c) => `<div class="corridor-edit-row"><strong>Corredor ${c.number}</strong><label>Nome do corredor<input data-corridor-name="${c.id}" value="${esc(c.name || '')}" maxlength="80"></label></div>`).join('');
   $('corridorManagerDialog').showModal();
 }
 function currentProductSelection() {
@@ -1859,7 +1801,6 @@ function bind() {
     navTrigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   };
   bindProfilePhoto();
-  renderAdminTeamPanel().catch(() => {});
   $('navProfilePhotoButton')?.addEventListener('click', () => { openProfilePhotoPicker(); });
   $('navLogoutButton')?.addEventListener('click', () => { if (window.VPA_LOGOUT) window.VPA_LOGOUT($('navLogoutButton')); });
   $('closeProductDialog')?.addEventListener('click', () => $('productDialog').close());
@@ -1882,7 +1823,7 @@ function bind() {
     const filter = b.dataset.subnav;
     if (filter === 'critical' || filter === 'today') filterProducts($('search')?.value || '', filter);
   }));
-  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; productPage = 1; localStorage.setItem('vpa-product-filter', productFilter); localStorage.setItem('vpa-product-page', '1'); render(); }));
+  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); render(); }));
   $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); render(); });
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
 
@@ -1920,7 +1861,7 @@ function bind() {
   $('closeCorridorsDialogBottom')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorManagerDialog')?.addEventListener('click', () => $('corridorManagerDialog').close());
   $('cancelCorridorManager')?.addEventListener('click', () => $('corridorManagerDialog').close());
-  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) c.name = name.value.trim() || `Corredor ${c.number}`; }); await save(); try { const remote = await window.VPASupabase?.upsertCorridors?.(data.corridors); if (remote?.length) { const byNumber = new Map(remote.map(r => [String(r.corridor_number), r])); data.corridors.forEach(c => { const r = byNumber.get(String(c.number)); if (r) c.cloudId = r.id; }); await save(); showTeamToast('☁️ Corredores sincronizados na nuvem.', 'success'); } } catch (error) { showTeamToast('⚠️ Corredores salvos localmente, mas não sincronizados: ' + (error.message || error), 'warning'); } $('corridorManagerDialog').close(); render(); });
+  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) c.name = name.value.trim() || `Corredor ${c.number}`; }); await save(); try { const result = await window.VPASupabase?.syncCorridors?.(data.corridors); if (result?.failed) showTeamToast('⚠️ Alguns corredores não foram enviados à nuvem.', 'warning'); else if (result?.synced) showTeamToast('☁️ Corredores compartilhados atualizados.', 'success'); } catch (error) { showTeamToast('⚠️ Não foi possível sincronizar os corredores.', 'warning'); } $('corridorManagerDialog').close(); render(); });
   $('allCorridors')?.addEventListener('click', showCorridors);
   $('reportsShortcut')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBtn')?.addEventListener('click', () => { view = 'reports'; render(); });
@@ -1933,8 +1874,6 @@ function bind() {
   $('closeBatchDialog')?.addEventListener('click', () => $('batchDialog').close());
   $('cancelBatch')?.addEventListener('click', () => $('batchDialog').close());
   $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); refreshProductsSearchResults(); });
-  $('productsPrev')?.addEventListener('click', () => { productPage = Math.max(1, productPage - 1); localStorage.setItem('vpa-product-page', String(productPage)); render(); });
-  $('productsNext')?.addEventListener('click', () => { productPage += 1; localStorage.setItem('vpa-product-page', String(productPage)); render(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
@@ -2006,6 +1945,15 @@ $('productForm').addEventListener('submit', async (e) => {
     syncPending: true
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
+  if (product.photo && String(product.photo).startsWith('data:') && window.VPASupabase?.uploadProductPhoto) {
+    try {
+      const cloudPhoto = await window.VPASupabase.uploadProductPhoto(product.photo, product.id);
+      if (cloudPhoto) { product.photo = cloudPhoto; product.photoUrl = cloudPhoto; }
+    } catch (photoError) {
+      console.warn('[VPA] Foto não enviada à nuvem:', photoError.message || photoError);
+      showTeamToast('⚠️ Produto salvo, mas a foto não foi enviada à nuvem. Verifique o bucket product-photos.', 'warning');
+    }
+  }
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
@@ -2059,7 +2007,7 @@ function installHeaderBehavior() {
   window.addEventListener('scroll', updateHeader, { passive: true });
   updateHeader();
 }
-(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
+(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); await mergeCloudCorridors(false); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
   setTimeout(() => {
     bindTeamAuthListener().catch(() => {});
     initTeamRealtime().then(() => {
