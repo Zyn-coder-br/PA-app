@@ -1,4 +1,4 @@
-const APP_VERSION = 'V35';
+const APP_VERSION = 'V36';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -1644,13 +1644,36 @@ function bind() {
   $('batchCorridor')?.addEventListener('change', updateBatchPreview);
   $('closeBatchDialog')?.addEventListener('click', () => $('batchDialog').close());
   $('cancelBatch')?.addEventListener('click', () => $('batchDialog').close());
-  $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); render(); });
+  $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); refreshProductsSearchResults(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
   document.querySelectorAll('[data-expiry-filter]').forEach((b) => b.onclick = () => { expiryFilter = b.dataset.expiryFilter; localStorage.setItem('vpa-expiry-filter', expiryFilter); render(); });
   document.querySelectorAll('[data-pending-filter]').forEach((b) => b.onclick = () => { pendingFilter = b.dataset.pendingFilter; localStorage.setItem('vpa-pending-filter', pendingFilter); selectedProducts.clear(); render(); });
   document.querySelectorAll('[data-select-product]').forEach((b) => b.onchange = () => { if (b.checked) selectedProducts.add(b.dataset.selectProduct); else selectedProducts.delete(b.dataset.selectProduct); });
+}
+function refreshProductsSearchResults() {
+  const listEl = $('productList');
+  if (!listEl) return;
+  const searchValue = localStorage.getItem('vpa-product-search') || '';
+  const q = searchValue.trim().toLowerCase();
+  const allVisible = visibleProducts();
+  let list = allVisible.filter((p) => productFilter === 'fefo' ? Boolean(p.fefo) : productFilter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
+  if (productFilter === 'promotor' && promotorCompanyFilter !== 'all') {
+    list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
+  }
+  if (q) {
+    list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
+  }
+  listEl.innerHTML = groupedProductRows(list, {selectable: true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>';
+  const count = document.querySelector('.product-count');
+  if (count) count.textContent = `${list.length} produto${list.length === 1 ? '' : 's'}`;
+  document.querySelectorAll('[data-select-product]').forEach((b) => {
+    b.onchange = () => {
+      if (b.checked) selectedProducts.add(b.dataset.selectProduct);
+      else selectedProducts.delete(b.dataset.selectProduct);
+    };
+  });
 }
 function filterProducts(query, filter) {
   const q = (query || '').toLowerCase();
