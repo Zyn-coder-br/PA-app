@@ -976,4 +976,7 @@ body{
 
 /* V41 - Modal de rebaixa fechado não ocupa espaço na página. */
 .rebaixa-import-dialog:not([open]){display:none!important}
-.team-admin-list{display:grid;gap:10px;margin-top:12px}.team-admin-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.team-admin-row strong{display:block}.team-admin-row small{display:block;color:var(--muted);margin-top:4px}.team-admin-row select{min-width:130px;max-width:180px}.presence-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 4px}.presence-dot.online{background:#22a06b}.presence-dot.offline{background:#a7b0ad}@media(max-width:600px){.team-admin-row{align-items:flex-start;flex-direction:column}.team-admin-row select{width:100%;max-width:none}}
+
+/* V42 - paginação compacta do catálogo */
+.pagination { display:flex; align-items:center; justify-content:center; gap:12px; padding:14px 0 4px; color:var(--muted, #71827b); font-size:.9rem; }
+.pagination button:disabled { opacity:.45; cursor:not-allowed; }

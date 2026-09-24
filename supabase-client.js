@@ -167,12 +167,27 @@
     resolvido: 'resolved'
   };
 
+  async function uploadProductPhoto(dataUrl, productId) {
+    const client = await init();
+    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || null;
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    const extension = (blob.type || 'image/jpeg').split('/')[1] || 'jpeg';
+    const path = `${productId}.${extension}`;
+    const uploaded = await client.storage.from('product-photos').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+    if (uploaded.error) throw uploaded.error;
+    const publicUrl = client.storage.from('product-photos').getPublicUrl(path);
+    return publicUrl?.data?.publicUrl || null;
+  }
+
   async function syncProduct(product, corridorNumber) {
     const client = await init();
     const session = await getSession();
     if (!session || !session.user) throw new Error('Nenhuma sessão autenticada encontrada.');
     if (!product || !product.id) throw new Error('Produto sem identificador local.');
     if (!Number.isFinite(Number(corridorNumber))) throw new Error('Corredor local sem número válido.');
+    let cloudPhoto = null;
+    if (product.photo) { cloudPhoto = await uploadProductPhoto(product.photo, product.id); }
 
     const corridorResult = await client
       .from('corridors')
@@ -372,6 +387,75 @@
     return results;
   }
 
+
+
+  async function setPresence(online) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) return null;
+    const result = await client.from('team_presence').upsert({ user_id: session.user.id, online: Boolean(online), last_seen_at: new Date().toISOString() }, { onConflict: 'user_id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function listTeamUsers() {
+    const client = await init();
+    const result = await client.from('team_user_overview').select('id, full_name, role, active, online, last_seen_at').order('full_name', { ascending: true });
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function setUserRole(userId, role) {
+    const client = await init();
+    const result = await client.rpc('admin_set_user_role', { p_user_id: userId, p_role: role });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function subscribePresence(onChange) {
+    return subscribeChannel('vpa-team-presence', 'team_presence', onChange, 'presença da equipe');
+  }
+
+  async function subscribeCorridors(onChange) {
+    return subscribeChannel('vpa-corridors', 'corridors', onChange, 'corredores');
+  }
+
+  async function listCorridors() {
+    const client = await init();
+    const result = await client.from('corridors').select('id, corridor_number, name, active, updated_at').eq('active', true).order('corridor_number', { ascending: true });
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function upsertCorridors(corridors) {
+    const client = await init();
+    const output = [];
+    for (const c of (Array.isArray(corridors) ? corridors : [])) {
+      const number = Number(c.number);
+      const name = String(c.name || ('Corredor ' + number)).trim();
+      if (!Number.isFinite(number) || !name) continue;
+      let result;
+      if (c.cloudId) {
+        result = await client.from('corridors').update({ corridor_number: number, name, active: c.active !== false }).eq('id', c.cloudId).select('id, corridor_number, name, active, updated_at').maybeSingle();
+      } else {
+        const existing = await client.from('corridors').select('id').eq('corridor_number', number).maybeSingle();
+        if (existing.error) throw existing.error;
+        if (existing.data?.id) result = await client.from('corridors').update({ name, active: c.active !== false }).eq('id', existing.data.id).select('id, corridor_number, name, active, updated_at').single();
+        else result = await client.from('corridors').insert({ corridor_number: number, name, active: c.active !== false }).select('id, corridor_number, name, active, updated_at').single();
+      }
+      if (result.error) throw result.error;
+      if (result.data) output.push(result.data);
+    }
+    return output;
+  }
+
+  async function deleteCorridor(id) {
+    const client = await init();
+    const result = await client.from('corridors').update({ active: false }).eq('id', id).select('id').maybeSingle();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function listProducts() {
     const client = await init();
     const result = await client
@@ -499,45 +583,6 @@
     return result.data;
   }
 
-
-  async function listCorridors() {
-    const client = await init();
-    const result = await client.from('corridors').select('id, corridor_number, name, active').eq('active', true).order('corridor_number', { ascending: true });
-    if (result.error) throw result.error;
-    return result.data || [];
-  }
-
-  async function updateCorridorName(corridorId, name) {
-    const client = await init();
-    const result = await client.from('corridors').update({ name: String(name || '').trim() }).eq('id', corridorId).select('id, corridor_number, name, active').single();
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-  async function heartbeatPresence() {
-    const client = await init();
-    const session = await getSession();
-    if (!session?.user?.id) return null;
-    const result = await client.from('vpa_user_presence').upsert({ user_id: session.user.id, last_seen: new Date().toISOString() }, { onConflict: 'user_id' }).select().single();
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-  async function listTeamMembers() {
-    const client = await init();
-    const result = await client.rpc('vpa_admin_list_team_members');
-    if (result.error) throw result.error;
-    return result.data || [];
-  }
-
-  async function updateUserRole(userId, role) {
-    const client = await init();
-    const result = await client.rpc('vpa_admin_update_user_role', { p_user_id: userId, p_role: role });
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-
   async function updatePromotorProductTag(productId, tag) {
     const client = await init();
     const result = await client.rpc('tag_promotor_product_from_vpa', { p_product_id: productId, p_tag: tag });
@@ -575,11 +620,7 @@
     updatePassword: updatePassword,
     signOut: signOut,
     getProfile: getProfile,
-    listCorridors: listCorridors,
-    updateCorridorName: updateCorridorName,
-    heartbeatPresence: heartbeatPresence,
-    listTeamMembers: listTeamMembers,
-    updateUserRole: updateUserRole,
+    uploadProductPhoto: uploadProductPhoto,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
     syncTemporaryBatchItem: syncTemporaryBatchItem,
@@ -598,6 +639,14 @@
     subscribeBatidas: subscribeBatidas,
     subscribeProducts: subscribeProducts,
     subscribePromotorProducts: subscribePromotorProducts,
+    listCorridors: listCorridors,
+    setPresence: setPresence,
+    listTeamUsers: listTeamUsers,
+    setUserRole: setUserRole,
+    subscribePresence: subscribePresence,
+    subscribeCorridors: subscribeCorridors,
+    upsertCorridors: upsertCorridors,
+    deleteCorridor: deleteCorridor,
     subscribeRebaixaItems: subscribeRebaixaItems,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
