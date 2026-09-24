@@ -1,4 +1,4 @@
-const APP_VERSION = 'V42';
+const APP_VERSION = 'V43';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -59,33 +59,6 @@ function seed() {
   data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
-async function mergeCloudCorridors(shouldRender = true) {
-  if (!window.VPASupabase?.listCorridors) return;
-  try {
-    const rows = await window.VPASupabase.listCorridors();
-    if (!Array.isArray(rows)) return;
-    const byNumber = new Map(rows.map((row) => [Number(row.corridor_number), row]));
-    data.corridors = data.corridors
-      .filter((local) => byNumber.has(Number(local.number)))
-      .map((local) => {
-        const cloud = byNumber.get(Number(local.number));
-        return { ...local, cloudId: cloud.id, number: Number(cloud.corridor_number), name: cloud.name || local.name, active: cloud.active !== false, cloudUpdatedAt: cloud.updated_at || null };
-      });
-    rows.forEach((row) => {
-      if (!data.corridors.some((local) => Number(local.number) === Number(row.corridor_number))) {
-        data.corridors.push({ id: uid(), cloudId: row.id, number: Number(row.corridor_number), name: row.name || `Corredor ${row.corridor_number}`, lastCheck: null, active: row.active !== false });
-      }
-    });
-    data.corridors.sort((a, b) => Number(a.number) - Number(b.number));
-    await save();
-    if (shouldRender) render();
-  } catch (error) { console.warn('[VPA] Não foi possível carregar corredores da nuvem:', error.message || error); }
-}
-
-function notifyCorridorEvent(payload) {
-  mergeCloudCorridors(true).catch((error) => console.warn('[VPA] Atualização dos corredores:', error));
-}
-
 function syncCorridorLastChecksFromBatches() {
   const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
   data.corridors.forEach((c) => {
@@ -309,7 +282,6 @@ function dashboard() {
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   const filter = productFilter;
-  if (filter === 'rebaixa') return rebaixaPage();
   const allVisible = visibleProducts();
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
@@ -320,28 +292,14 @@ function products() {
     const q = searchValue.trim().toLowerCase();
     list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
   }
-  const critical = list.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
-  const attention = list.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
-  const resolved = list.filter((p) => p.status === 'resolvido').length;
-  const fefoCount = list.filter((p) => p.fefo).length;
-  const productFilters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
-  return `<section class="products-page">
-    <div class="products-hero">
-      <div class="products-hero-copy">
-        <div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div>
-        <h2>Controle de produtos</h2>
-        <p>Consulte, organize e acompanhe os produtos registrados na operação.</p>
-      </div>
-    </div>
-    <div class="products-overview">
-      <div class="product-stat-card"><div class="product-stat-icon green">▦</div><div><strong>${list.length}</strong><span>Produtos na lista</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon red">!</div><div><strong>${critical}</strong><span>Críticos · até 7 dias</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon amber">◷</div><div><strong>${attention}</strong><span>Em atenção</span></div></div>
-      <div class="product-stat-card"><div class="product-stat-icon blue">✓</div><div><strong>${resolved}</strong><span>Resolvidos</span></div></div>
-    </div>
-    <div class="products-section-heading"><div><div class="eyebrow">CATÁLOGO OPERACIONAL</div><h3>Seus produtos</h3><p>Filtre por categoria ou pesquise por nome, EAN e marca.</p></div><span class="products-mini-count">${fefoCount} FEFO</span></div>
-    <div class="products-filter-panel">
-      <div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>
+  const rebaixaMode = filter === 'rebaixa';
+  const rebaixaCount = data.rebaixaItems.length;
+  const statsList = rebaixaMode ? data.rebaixaItems : list;
+  const critical = statsList.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const attention = statsList.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const resolved = rebaixaMode ? 0 : list.filter((p) => p.status === 'resolvido').length;
+  const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
+  const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
@@ -357,7 +315,21 @@ function products() {
           <button type="button" class="secondary" id="floatingQuickTag">🏷 Adicionar tag</button>
           <button type="button" class="secondary danger-btn" id="floatingDeleteSelected">🗑 Excluir selecionados</button>
         </div>
-      </div>
+      </div>`;
+  return `<section class="products-page">
+    <div class="products-hero">
+      <div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · PRODUTOS</div><h2>Controle de produtos</h2><p>Consulte, organize e acompanhe os produtos registrados na operação.</p></div>
+    </div>
+    <div class="products-overview">
+      <div class="product-stat-card"><div class="product-stat-icon green">▦</div><div><strong>${statsList.length}</strong><span>Produtos na lista</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon red">!</div><div><strong>${critical}</strong><span>Críticos · até 7 dias</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon amber">◷</div><div><strong>${attention}</strong><span>Em atenção</span></div></div>
+      <div class="product-stat-card"><div class="product-stat-icon blue">✓</div><div><strong>${resolved}</strong><span>Resolvidos</span></div></div>
+    </div>
+    <div class="products-section-heading"><div><div class="eyebrow">CATÁLOGO OPERACIONAL</div><h3>${rebaixaMode ? 'Rebaixa Automática' : 'Seus produtos'}</h3><p>${rebaixaMode ? 'Lista compartilhada de produtos para rebaixa, organizada por vencimento.' : 'Filtre por categoria ou pesquise por nome, EAN e marca.'}</p></div><span class="products-mini-count">${rebaixaMode ? rebaixaCount + ' itens' : fefoCount + ' FEFO'}</span></div>
+    <div class="products-filter-panel">
+      <div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>
+      ${panelContent}
     </div>
   </section>`;
 }
@@ -394,6 +366,12 @@ let teamRealtimeStarting = null;
 let teamRealtimeUserId = null;
 let teamNotificationCount = 0;
 const completedBatchNotifications = new Map();
+let rebaixaInsertBuffer = new Map();
+let rebaixaInsertTimer = null;
+let rebaixaCompletionTimer = null;
+let rebaixaCompletionNoticeShown = false;
+let presenceTimer = null;
+let teamAdminRefreshTimer = null;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -510,7 +488,7 @@ function localProductFromCloud(row) {
     ean: row.ean || '',
     company: row.company || '',
     location: row.location || '',
-    photo: row.photo_url || meta.photoUrl || '',
+    photo: row.photo_url || '',
     corridorId: corridor?.id || null,
     corridorNumber: corridor?.number || null,
     expiry: row.expiration_date || '',
@@ -700,8 +678,9 @@ async function mergeCloudRebaixaItems(shouldRender = true) {
   try {
     const rows = await window.VPASupabase.listRebaixaItems();
     const remote = rows.map(localRebaixaFromCloud).filter((item) => item.status !== 'completed');
-    // Não apagar uma lista local antiga se a tabela ainda estiver vazia no primeiro acesso.
-    if (remote.length || !data.rebaixaItems.length) data.rebaixaItems = remote;
+    // O Supabase é a fonte oficial: quando a consulta retorna vazia,
+    // a lista local também precisa ser esvaziada (inclusive após a última rebaixa).
+    data.rebaixaItems = remote;
     data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
     await save();
     if (shouldRender) render();
@@ -719,6 +698,46 @@ async function refreshRebaixaOnReturn() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRebaixaOnReturn(); });
 window.addEventListener('focus', refreshRebaixaOnReturn);
 
+function flushRebaixaInsertNotifications() {
+  rebaixaInsertTimer = null;
+  const count = rebaixaInsertBuffer.size;
+  rebaixaInsertBuffer.clear();
+  if (!count) return;
+  const message = `Nova lista de rebaixa - ${count} novo${count === 1 ? '' : 's'} item${count === 1 ? '' : 'ns'}`;
+  teamNotificationCount += 1;
+  showTeamToast('🔔 ' + message, 'team');
+  showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-new-list');
+}
+
+function scheduleRebaixaInsertNotification(row) {
+  if (!row?.id) return;
+  rebaixaInsertBuffer.set(String(row.id), row);
+  window.clearTimeout(rebaixaInsertTimer);
+  rebaixaInsertTimer = window.setTimeout(flushRebaixaInsertNotifications, 900);
+}
+
+function scheduleRebaixaCompletionNotification() {
+  window.clearTimeout(rebaixaCompletionTimer);
+  rebaixaCompletionTimer = window.setTimeout(async () => {
+    rebaixaCompletionTimer = null;
+    try {
+      const rows = await window.VPASupabase?.listRebaixaItems?.();
+      const remaining = Array.isArray(rows) ? rows.filter((row) => row.status !== 'completed') : [];
+      if (remaining.length === 0 && !rebaixaCompletionNoticeShown) {
+        rebaixaCompletionNoticeShown = true;
+        const message = 'Rebaixa Automática Concluída';
+        teamNotificationCount += 1;
+        showTeamToast('🔔 ' + message, 'team');
+        showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-completed');
+      } else if (remaining.length > 0) {
+        rebaixaCompletionNoticeShown = false;
+      }
+    } catch (error) {
+      console.warn('[VPA] Não foi possível verificar a conclusão da rebaixa:', error.message || error);
+    }
+  }, 900);
+}
+
 function notifyRebaixaEvent(payload) {
   const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
   const row = payload?.new || payload?.record || payload?.old || {};
@@ -728,9 +747,16 @@ function notifyRebaixaEvent(payload) {
     return;
   }
   mergeCloudRebaixaItems(true).catch((error) => console.warn('[VPA] Atualização da Rebaixa Automática:', error));
-  const title = eventType === 'DELETE' ? 'Rebaixa Automática atualizada' : row.status === 'completed' ? 'Rebaixa Automática concluída' : 'Nova lista de Rebaixa Automática';
-  showTeamToast('🔔 ' + title, 'team');
-  showRealtimeNotification('Vencimento PA', title, 'vpa-rebaixa-' + (row.id || Date.now()));
+  // INSERTs de uma mesma planilha são agrupados em um único aviso.
+  if (eventType === 'INSERT' && row.status !== 'completed') {
+    rebaixaCompletionNoticeShown = false;
+    scheduleRebaixaInsertNotification(row);
+    return;
+  }
+  // UPDATEs individuais não geram spam. Só avisamos quando a lista inteira acabou.
+  if (eventType === 'UPDATE' && row.status === 'completed') {
+    scheduleRebaixaCompletionNotification();
+  }
 }
 
 async function mergeCloudBatidas(shouldRender = true) {
@@ -883,6 +909,51 @@ function notifyPromotorProductEvent(payload) {
   showTeamToast((eventType === 'DELETE' ? '🗑 Produto removido do Promotor PA: ' : '🔄 Produto atualizado no Promotor PA: ') + name, 'success');
 }
 
+
+function isAdministrator() {
+  return String(window.VPA_PROFILE?.role || '').toLowerCase() === 'admin';
+}
+function roleLabel(role) {
+  return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador' }[role] || role || 'Usuário');
+}
+async function mergeCloudCorridors(shouldRender = true) {
+  if (!window.VPASupabase?.listCorridors || !window.VPASupabase.isConfigured()) return;
+  try {
+    const rows = await window.VPASupabase.listCorridors();
+    if (!Array.isArray(rows) || !rows.length) return;
+    const localByNumber = new Map(data.corridors.map((c) => [Number(c.number), c]));
+    data.corridors = rows.map((row) => {
+      const local = localByNumber.get(Number(row.corridor_number)) || {};
+      return { ...local, id: local.id || uid(), cloudId: row.id, number: Number(row.corridor_number), name: row.name || `Corredor ${row.corridor_number}`, active: row.active !== false, lastCheck: local.lastCheck || null };
+    });
+    await save();
+    if (shouldRender) render();
+  } catch (error) { console.warn('[VPA] Não foi possível carregar corredores compartilhados:', error.message || error); }
+}
+async function startPresenceHeartbeat() {
+  if (presenceTimer) return;
+  const beat = () => window.VPASupabase?.heartbeatPresence?.().catch((error) => console.warn('[VPA] Presença:', error.message || error));
+  await beat();
+  presenceTimer = window.setInterval(beat, 60000);
+}
+async function loadAdminTeamMembers() {
+  const target = $('adminTeamList');
+  if (!target || !isAdministrator() || !window.VPASupabase?.listTeamMembers) return;
+  target.innerHTML = '<div class="empty">Carregando usuários...</div>';
+  try {
+    const members = await window.VPASupabase.listTeamMembers();
+    target.innerHTML = members.length ? members.map((member) => {
+      const online = Boolean(member.online);
+      const role = String(member.role || 'operador');
+      return `<div class="team-admin-row"><div><strong>${esc(member.full_name || member.email || 'Usuário')}</strong><small>${esc(member.email || '')} · <span class="presence-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}</small></div><select data-team-role="${esc(member.id)}"><option value="operador" ${role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${role === 'chefe' ? 'selected' : ''}>Gerência</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`;
+    }).join('') : '<div class="empty">Nenhum usuário encontrado.</div>';
+    target.querySelectorAll('[data-team-role]').forEach((select) => select.addEventListener('change', async () => {
+      try { await window.VPASupabase.updateUserRole(select.dataset.teamRole, select.value); showTeamToast('✅ Categoria do usuário atualizada.', 'success'); }
+      catch (error) { showTeamToast('⚠️ Não foi possível alterar a categoria.', 'warning'); console.warn('[VPA] Alteração de categoria:', error); }
+    }));
+  } catch (error) { target.innerHTML = '<div class="empty">Não foi possível carregar os usuários. Execute a migração administrativa no Supabase.</div>'; console.warn('[VPA] Usuários:', error.message || error); }
+}
+
 async function initTeamRealtime() {
   if (teamRealtimeActive) return teamRealtimeChannel;
   if (teamRealtimeStarting) return teamRealtimeStarting;
@@ -895,21 +966,21 @@ async function initTeamRealtime() {
       return;
     }
     teamRealtimeUserId = session.user.id;
+    await mergeCloudCorridors(false);
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
     await mergeCloudTemporaryBatchItems(false);
     await mergeCloudPromotorProducts(false);
     await mergeCloudRebaixaItems(false);
-    await mergeCloudCorridors(false);
     render();
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const promotorChannel = await window.VPASupabase.subscribePromotorProducts(notifyPromotorProductEvent);
     const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
-    const corridorsChannel = await window.VPASupabase.subscribeCorridors(notifyCorridorEvent);
-    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel, corridors: corridorsChannel };
+    teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel };
     teamRealtimeActive = true;
-    showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
+    await startPresenceHeartbeat();
+    showTeamToast('🟢 Equipe online: batidas e corredores compartilhados ativados.', 'success');
    } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
     return null;
@@ -962,10 +1033,13 @@ async function checkForAppUpdate() {
 }
 
 function settings() {
-  return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
-  <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas locais são sincronizados automaticamente após o login quando o banco está configurado. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  const admin = isAdministrator();
+  const personal = `<div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
+  if (!admin) return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Seu perfil permite apenas ajustes pessoais e atualização do aplicativo.</p></div></div>${personal}`;
+  return `<div class="section-head"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Controle geral do sistema, usuários, sincronização e preferências.</p></div></div>${personal}
+  <div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração é aplicada no perfil do Supabase.</p><div id="adminTeamList" class="team-admin-list"><div class="empty">Carregando usuários...</div></div></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? '🟢 Equipe conectada' : '🟡 Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1002,12 +1076,7 @@ function rebaixaPage() {
   const q = searchValue.trim().toLowerCase();
   const items = data.rebaixaItems.slice().sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31'))).filter((item) => !q || `${item.loja} ${item.plu} ${item.name} ${item.quantity} ${item.expiry} ${item.value}`.toLowerCase().includes(q));
   const empty = !data.rebaixaItems.length;
-  return `<section class="products-page">
-    <div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · REBAIXAS</div><h2>Rebaixa Automática</h2><p>Lista independente para conferência e atualização de preços. Os itens são organizados pela data de vencimento.</p></div></div>
-    <div class="products-section-heading"><div><div class="eyebrow">LISTA DE REBAIXAS</div><h3>Produtos para rebaixar</h3><p>Importe uma planilha Excel e marque cada item como preço alterado após concluir a rebaixa.</p></div><span class="products-mini-count">${data.rebaixaItems.length} itens</span></div>
-    <div class="products-filter-panel"><div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div>
-    <div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div></div>
-  </section>`;
+  return `<div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div><div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div>`;
 }
 function reports() {
   const monthKey = today().slice(0, 7);
@@ -1577,8 +1646,10 @@ async function markRebaixaDone(id) {
       data.rebaixaItems = data.rebaixaItems.filter((entry) => String(entry.id) !== String(id));
     }
     await save();
-    showTeamToast(`✅ ${item.name} marcado como preço alterado.`, 'success');
-    if (!data.rebaixaItems.length) showTeamToast('📣 Rebaixas automática realizada.', 'success');
+    if (!data.rebaixaItems.length) {
+      rebaixaCompletionNoticeShown = true;
+      showTeamToast('📣 Rebaixa Automática Concluída.', 'success');
+    }
     render();
   } catch (error) {
     console.error('[VPA] Falha ao concluir rebaixa:', error);
@@ -1813,6 +1884,7 @@ function bind() {
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
+  if (isAdministrator()) loadAdminTeamMembers();
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
   $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
@@ -1861,7 +1933,7 @@ function bind() {
   $('closeCorridorsDialogBottom')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorManagerDialog')?.addEventListener('click', () => $('corridorManagerDialog').close());
   $('cancelCorridorManager')?.addEventListener('click', () => $('corridorManagerDialog').close());
-  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) c.name = name.value.trim() || `Corredor ${c.number}`; }); await save(); try { const result = await window.VPASupabase?.syncCorridors?.(data.corridors); if (result?.failed) showTeamToast('⚠️ Alguns corredores não foram enviados à nuvem.', 'warning'); else if (result?.synced) showTeamToast('☁️ Corredores compartilhados atualizados.', 'success'); } catch (error) { showTeamToast('⚠️ Não foi possível sincronizar os corredores.', 'warning'); } $('corridorManagerDialog').close(); render(); });
+  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const changes = []; data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) { c.name = name.value.trim() || `Corredor ${c.number}`; changes.push(c); } }); await save(); try { for (const c of changes) { if (c.cloudId && window.VPASupabase?.updateCorridorName) await window.VPASupabase.updateCorridorName(c.cloudId, c.name); } showTeamToast('☁️ Corredores atualizados para toda a equipe.', 'success'); } catch (error) { showTeamToast('⚠️ Os nomes foram salvos localmente, mas não foram enviados à nuvem.', 'warning'); console.warn('[VPA] Atualização de corredores:', error); } $('corridorManagerDialog').close(); render(); });
   $('allCorridors')?.addEventListener('click', showCorridors);
   $('reportsShortcut')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBtn')?.addEventListener('click', () => { view = 'reports'; render(); });
@@ -1945,15 +2017,6 @@ $('productForm').addEventListener('submit', async (e) => {
     syncPending: true
   };
   if (existing) Object.assign(existing, product); else data.products.push(product);
-  if (product.photo && String(product.photo).startsWith('data:') && window.VPASupabase?.uploadProductPhoto) {
-    try {
-      const cloudPhoto = await window.VPASupabase.uploadProductPhoto(product.photo, product.id);
-      if (cloudPhoto) { product.photo = cloudPhoto; product.photoUrl = cloudPhoto; }
-    } catch (photoError) {
-      console.warn('[VPA] Foto não enviada à nuvem:', photoError.message || photoError);
-      showTeamToast('⚠️ Produto salvo, mas a foto não foi enviada à nuvem. Verifique o bucket product-photos.', 'warning');
-    }
-  }
   await save();
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   try {
@@ -2007,7 +2070,7 @@ function installHeaderBehavior() {
   window.addEventListener('scroll', updateHeader, { passive: true });
   updateHeader();
 }
-(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); await mergeCloudCorridors(false); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
+(async () => { applyTheme(); await openDB(); await load(); seed(); await save(); if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {}); render();
   setTimeout(() => {
     bindTeamAuthListener().catch(() => {});
     initTeamRealtime().then(() => {

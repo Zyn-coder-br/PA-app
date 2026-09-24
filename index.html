@@ -132,7 +132,7 @@
     var nameEl = byId('vpaHeaderUserName'); var roleEl = byId('vpaHeaderUserRole'); var avatarEl = byId('vpaHeaderAvatar');
     if (nameEl) nameEl.textContent = 'Olá, ' + display + '! 👋';
     if (avatarEl) { var savedAvatar = ''; try { savedAvatar = localStorage.getItem('vpa-profile-avatar') || ''; } catch (e) {} if (savedAvatar) { avatarEl.innerHTML = '<img src="' + savedAvatar.replace(/"/g, '&quot;') + '" alt="Foto do perfil">'; avatarEl.classList.add('has-photo'); } else { avatarEl.textContent = first; avatarEl.classList.remove('has-photo'); } }
-    if (roleEl) { var roleLabels = { admin: 'Administrador', administrador: 'Administrador', chefe: 'Gerência', gerente: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
+    if (roleEl) { var roleLabels = { admin: 'Administrador', chefe: 'Chefe', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2' }; roleEl.textContent = roleLabels[profile && profile.role] || 'Usuário'; }
     window.VPA_PROFILE = profile || null;
   }
   function applyProfileProtection(profile) {
@@ -147,7 +147,6 @@
     try {
       currentProfile = await window.VPASupabase.getProfile(user.id);
       if (currentProfile && currentProfile.active === false) { message('Seu usuário está aguardando liberação do administrador.'); await window.VPASupabase.signOut(); showLogin(); return null; }
-      if (currentProfile && currentProfile.role === 'promotor') { message('Este usuário possui perfil Promotor e deve acessar somente o Promotor PA.'); await window.VPASupabase.signOut(); showLogin(); return null; }
       setLoggedUser(user, currentProfile); applyProfileProtection(currentProfile); return currentProfile;
     } catch (error) { console.warn('[VPA] Não foi possível carregar o perfil:', error); message('Login realizado, mas não foi possível carregar seu perfil.'); setLoggedUser(user, null); applyProfileProtection(null); return null; }
   }

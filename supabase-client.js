@@ -167,52 +167,6 @@
     resolvido: 'resolved'
   };
 
-  async function uploadProductPhoto(dataUrl, productId) {
-    if (!dataUrl || !String(dataUrl).startsWith('data:')) return dataUrl || '';
-    const client = await init();
-    const session = await getSession();
-    if (!session?.user?.id) throw new Error('Nenhuma sessão autenticada para enviar a foto.');
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-    const extension = (blob.type || 'image/jpeg').split('/')[1] || 'jpeg';
-    const path = `${session.user.id}/${productId}.${extension}`;
-    const upload = await client.storage.from('product-photos').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg', cacheControl: '3600' });
-    if (upload.error) throw upload.error;
-    const publicResult = client.storage.from('product-photos').getPublicUrl(path);
-    return publicResult?.data?.publicUrl || '';
-  }
-
-  async function listCorridors() {
-    const client = await init();
-    const result = await client.from('corridors').select('id, corridor_number, name, active, updated_at').order('corridor_number', { ascending: true });
-    if (result.error) throw result.error;
-    return result.data || [];
-  }
-
-  async function upsertCorridor(corridor) {
-    const client = await init();
-    const number = Number(corridor?.number ?? corridor?.corridor_number);
-    if (!Number.isFinite(number)) throw new Error('Número de corredor inválido.');
-    const name = String(corridor?.name || `Corredor ${number}`).trim();
-    const existing = await client.from('corridors').select('id').eq('corridor_number', number).maybeSingle();
-    if (existing.error) throw existing.error;
-    const result = existing.data
-      ? await client.from('corridors').update({ name, active: corridor.active !== false }).eq('id', existing.data.id).select().single()
-      : await client.from('corridors').insert({ corridor_number: number, name, active: corridor.active !== false }).select().single();
-    if (result.error) throw result.error;
-    return result.data;
-  }
-
-  async function syncCorridors(corridors) {
-    const list = Array.isArray(corridors) ? corridors : [];
-    const results = { total: list.length, synced: 0, failed: 0, errors: [] };
-    for (const corridor of list) {
-      try { await upsertCorridor(corridor); results.synced += 1; }
-      catch (error) { results.failed += 1; results.errors.push({ number: corridor?.number, message: error?.message || 'Falha' }); }
-    }
-    return results;
-  }
-
   async function syncProduct(product, corridorNumber) {
     const client = await init();
     const session = await getSession();
@@ -251,8 +205,7 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || null,
         categoriaCadastro: product.categoriaCadastro || null,
-        tag: product.tag || '',
-        photoUrl: product.photoUrl || product.photo || ''
+        tag: product.tag || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -301,8 +254,7 @@
         createdAt: product.createdAt || null,
         origemCadastro: product.origemCadastro || 'batida',
         categoriaCadastro: product.categoriaCadastro || 'general',
-        tag: product.tag || '',
-        photoUrl: product.photoUrl || product.photo || ''
+        tag: product.tag || ''
       }
     };
     if (!payload.name) throw new Error('Produto sem nome.');
@@ -540,16 +492,51 @@
     return subscribeChannel('vpa-rebaixa-items', 'rebaixa_items', onChange, 'Rebaixa Automática');
   }
 
-  async function subscribeCorridors(onChange) {
-    return subscribeChannel('vpa-corridors', 'corridors', onChange, 'corredores');
-  }
-
   async function deletePromotorProduct(productId) {
     const client = await init();
     const result = await client.rpc('delete_promotor_product_from_vpa', { p_product_id: productId });
     if (result.error) throw result.error;
     return result.data;
   }
+
+
+  async function listCorridors() {
+    const client = await init();
+    const result = await client.from('corridors').select('id, corridor_number, name, active').eq('active', true).order('corridor_number', { ascending: true });
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function updateCorridorName(corridorId, name) {
+    const client = await init();
+    const result = await client.from('corridors').update({ name: String(name || '').trim() }).eq('id', corridorId).select('id, corridor_number, name, active').single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function heartbeatPresence() {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) return null;
+    const result = await client.from('vpa_user_presence').upsert({ user_id: session.user.id, last_seen: new Date().toISOString() }, { onConflict: 'user_id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function listTeamMembers() {
+    const client = await init();
+    const result = await client.rpc('vpa_admin_list_team_members');
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function updateUserRole(userId, role) {
+    const client = await init();
+    const result = await client.rpc('vpa_admin_update_user_role', { p_user_id: userId, p_role: role });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
 
   async function updatePromotorProductTag(productId, tag) {
     const client = await init();
@@ -588,10 +575,11 @@
     updatePassword: updatePassword,
     signOut: signOut,
     getProfile: getProfile,
-    uploadProductPhoto: uploadProductPhoto,
     listCorridors: listCorridors,
-    upsertCorridor: upsertCorridor,
-    syncCorridors: syncCorridors,
+    updateCorridorName: updateCorridorName,
+    heartbeatPresence: heartbeatPresence,
+    listTeamMembers: listTeamMembers,
+    updateUserRole: updateUserRole,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
     syncTemporaryBatchItem: syncTemporaryBatchItem,
@@ -611,7 +599,6 @@
     subscribeProducts: subscribeProducts,
     subscribePromotorProducts: subscribePromotorProducts,
     subscribeRebaixaItems: subscribeRebaixaItems,
-    subscribeCorridors: subscribeCorridors,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
     unsubscribe: unsubscribe,
