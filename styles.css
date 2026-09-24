@@ -889,3 +889,22 @@ body{
 .company-filter{min-width:190px;max-width:260px;padding:10px 12px;border:1px solid var(--border,#385148);border-radius:12px;background:var(--panel,#1d2b26);color:var(--text,#f3f7f5)}
 .external-promotor-row{border-left:3px solid #43c58b}
 @media(max-width:760px){.company-filter-label{width:100%;}.company-filter{flex:1;min-width:0;max-width:none}}
+
+/* Rebaixa Automática */
+.rebaixa-toolbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+.rebaixa-list { display:grid; gap:10px; }
+.rebaixa-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px; border:1px solid var(--border); border-radius:16px; background:var(--panel); }
+.rebaixa-main { min-width:0; flex:1; }
+.rebaixa-date { display:flex; flex-direction:column; align-items:flex-end; gap:8px; white-space:nowrap; }
+.rebaixa-date strong { color:var(--text); }
+.rebaixa-done-btn { border:1px solid rgba(42, 178, 112, .45); background:rgba(42, 178, 112, .16); color:var(--success, #35c782); border-radius:999px; padding:9px 12px; cursor:pointer; font-weight:700; }
+.rebaixa-done-btn:hover { background:rgba(42, 178, 112, .28); }
+.rebaixa-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:42px 18px; border:1px dashed var(--border); border-radius:16px; text-align:center; }
+.rebaixa-empty strong { font-size:1.1rem; }
+.rebaixa-empty span { color:var(--muted); }
+.rebaixa-import-table { overflow-x:auto; }
+@media (max-width: 640px) {
+  .rebaixa-row { align-items:flex-start; flex-direction:column; }
+  .rebaixa-date { width:100%; align-items:flex-start; }
+  .rebaixa-done-btn { width:100%; }
+}

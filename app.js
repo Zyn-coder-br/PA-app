@@ -1,8 +1,8 @@
-const APP_VERSION = 'V36';
+const APP_VERSION = 'V37';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
-let data = { corridors: [], products: [], batches: [], activeBatchId: null };
+let data = { corridors: [], products: [], batches: [], activeBatchId: null, rebaixaItems: [] };
 let view = localStorage.getItem('vpa-view') || 'dashboard';
 let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
@@ -55,6 +55,8 @@ function seed() {
   data.products ||= [];
   data.batches ||= [];
   data.activeBatchId ||= null;
+  data.rebaixaItems ||= [];
+  data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
@@ -278,8 +280,9 @@ function dashboard() {
   <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">${esc(loggedDisplayName().charAt(0).toUpperCase())}</div><div><div class="product-name">${esc(loggedDisplayName())}</div><div class="meta">${esc(window.VPA_PROFILE?.role || 'Usuário')} · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
 }
 function products() {
-  const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']];
+  const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   const filter = productFilter;
+  if (filter === 'rebaixa') return rebaixaPage();
   const allVisible = visibleProducts();
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
@@ -886,7 +889,7 @@ function floatingItems() {
     ['settings','⚙','Ajustes']
   ];
   const submenus = {
-    products: [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores']],
+    products: [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']],
     batches: [['current','Batida atual'],['history','Histórico']],
     expiries: [['today','Vence hoje'],['tomorrow','Vence amanhã'],['10','Vence em 2–10 dias'],['30','Vence em 11–30 dias'],['31','Vence em 31+ dias']],
     pending: [['pique','🔴 PIQUE'],['fefo','🔵 PIQUE FEFO']]
@@ -896,6 +899,26 @@ function floatingItems() {
     ? `<div class="floating-nav-divider">Opções desta tela</div>${submenus[view].map(([key,label]) => `<button class="nav-sub-item" data-submenu="${key}">${label}</button>`).join('')}`
     : '';
   return `<div class="floating-nav-heading">Navegação do sistema</div>${mainMarkup}${submenuMarkup}<div class="floating-nav-footer"><button class="nav-profile-photo" id="navProfilePhotoButton"><span>◉</span><strong>Alterar foto do perfil</strong></button><button class="nav-logout-item" id="navLogoutButton"><span>↪</span><strong>Sair da conta</strong></button></div>`;
+}
+function formatRebaixaValue(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return '—';
+  const raw = String(value).trim();
+  const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw.replace(/^R\$\s*/i, '');
+  const numeric = Number(normalized);
+  if (Number.isFinite(numeric) && raw !== '') return numeric.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  return raw;
+}
+function rebaixaPage() {
+  const searchValue = localStorage.getItem('vpa-rebaixa-search') || '';
+  const q = searchValue.trim().toLowerCase();
+  const items = data.rebaixaItems.slice().sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31'))).filter((item) => !q || `${item.loja} ${item.plu} ${item.name} ${item.quantity} ${item.expiry} ${item.value}`.toLowerCase().includes(q));
+  const empty = !data.rebaixaItems.length;
+  return `<section class="products-page">
+    <div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · REBAIXAS</div><h2>Rebaixa Automática</h2><p>Lista independente para conferência e atualização de preços. Os itens são organizados pela data de vencimento.</p></div></div>
+    <div class="products-section-heading"><div><div class="eyebrow">LISTA DE REBAIXAS</div><h3>Produtos para rebaixar</h3><p>Importe uma planilha Excel e marque cada item como preço alterado após concluir a rebaixa.</p></div><span class="products-mini-count">${data.rebaixaItems.length} itens</span></div>
+    <div class="products-filter-panel"><div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div>
+    <div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div></div>
+  </section>`;
 }
 function reports() {
   const monthKey = today().slice(0, 7);
@@ -1366,6 +1389,77 @@ async function confirmExcelFefoImport() {
   render();
 }
 
+let rebaixaExcelItems = [];
+function openRebaixaImport() {
+  rebaixaExcelItems = [];
+  $('rebaixaExcelInput').value = '';
+  $('rebaixaExcelStatus').textContent = '';
+  $('rebaixaExcelResults').innerHTML = '<div class="empty">Selecione uma planilha para visualizar os itens.</div>';
+  $('confirmRebaixaExcel').disabled = true;
+  $('rebaixaExcelDialog').showModal();
+}
+function renderRebaixaExcelItems() {
+  const selected = rebaixaExcelItems.filter((item) => item.selected);
+  $('rebaixaExcelResults').innerHTML = rebaixaExcelItems.length ? `<div class="fefo-ocr-note">${rebaixaExcelItems.length} item(ns) encontrado(s). Confira os dados e desmarque o que não deseja importar.</div><div class="excel-import-table rebaixa-import-table"><div class="excel-import-head"><span>Importar</span><span>Loja</span><span>PLU</span><span>Descrição</span><span>Estoque</span><span>Vencimento</span><span>Valor</span></div>${rebaixaExcelItems.map((item, index) => `<label class="excel-import-row"><input type="checkbox" data-rebaixa-index="${index}" ${item.selected ? 'checked' : ''}><span>${esc(item.loja)}</span><span>${esc(item.plu)}</span><span>${esc(item.name)}</span><span>${esc(item.quantity)}</span><span>${esc(item.expiry)}</span><span>${esc(item.value)}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum item válido foi encontrado na planilha.</div>';
+  $('confirmRebaixaExcel').disabled = !selected.length;
+  document.querySelectorAll('[data-rebaixa-index]').forEach((el) => el.addEventListener('change', () => { rebaixaExcelItems[Number(el.dataset.rebaixaIndex)].selected = el.checked; $('confirmRebaixaExcel').disabled = !rebaixaExcelItems.some((item) => item.selected); }));
+}
+async function readRebaixaExcelFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!window.XLSX) { $('rebaixaExcelStatus').textContent = 'Leitor Excel não carregado. Verifique a internet.'; return; }
+  $('rebaixaExcelStatus').textContent = 'Lendo planilha...';
+  $('confirmRebaixaExcel').disabled = true;
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
+    rebaixaExcelItems = rows.map((row, index) => {
+      const keys = Object.keys(row);
+      const get = (...names) => { const key = keys.find((k) => names.includes(String(k).trim().toUpperCase())); return key === undefined ? '' : row[key]; };
+      const loja = String(get('LOJA', 'Nº LOJA', 'NUMERO LOJA', 'NÚMERO DA LOJA')).trim();
+      const plu = String(get('PLU', 'CÓDIGO', 'CODIGO')).trim();
+      const name = String(get('DESCRICAO', 'DESCRIÇÃO', 'PRODUTO', 'NOME')).trim();
+      const quantity = String(get('ESTOQUE', 'QUANTIDADE', 'QTD')).trim();
+      const expiry = normalizeExcelDate(get('DATA VENCIMENTO', 'VENCIMENTO', 'VALIDADE', 'DATA DE VENCIMENTO'));
+      const value = String(get('VALOR', 'PREÇO', 'PRECO', 'VALOR VENDA')).trim();
+      return { id: uid(), loja, plu, name, quantity, expiry, value, selected: Boolean(name && expiry), row: index + 2 };
+    }).filter((item) => item.name && item.expiry);
+    renderRebaixaExcelItems();
+    $('rebaixaExcelStatus').textContent = `${rebaixaExcelItems.length} item(ns) encontrado(s). Nenhum item foi salvo ainda.`;
+  } catch (error) { console.error('[VPA] Falha ao ler lista de rebaixas:', error); $('rebaixaExcelStatus').textContent = 'Não foi possível ler a planilha. Confira os cabeçalhos e o formato do arquivo.'; rebaixaExcelItems = []; renderRebaixaExcelItems(); }
+}
+async function confirmRebaixaExcelImport() {
+  const selected = rebaixaExcelItems.filter((item) => item.selected && item.name && item.expiry);
+  if (!selected.length) { alert('Selecione pelo menos um item.'); return; }
+  const imported = selected.map((item) => ({ id: uid(), loja: item.loja, plu: item.plu, name: item.name, quantity: item.quantity, expiry: item.expiry, value: item.value, createdAt: new Date().toISOString() }));
+  const existingKeys = new Set(data.rebaixaItems.map((item) => `${item.loja}|${item.plu}|${item.name}|${item.expiry}`));
+  imported.forEach((item) => { const key = `${item.loja}|${item.plu}|${item.name}|${item.expiry}`; if (!existingKeys.has(key)) { data.rebaixaItems.push(item); existingKeys.add(key); } });
+  data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
+  await save();
+  $('rebaixaExcelDialog').close();
+  showTeamToast(`✅ ${imported.length} item(ns) processado(s) na lista de Rebaixa Automática.`, 'success');
+  render();
+}
+function exportRebaixaExcel() {
+  if (!data.rebaixaItems.length) return;
+  if (!window.XLSX) { alert('Exportador Excel não carregado.'); return; }
+  const rows = data.rebaixaItems.slice().sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31'))).map((item) => ({ Loja: item.loja, PLU: item.plu, Descrição: item.name, Estoque: item.quantity, 'Data de Vencimento': item.expiry, Valor: item.value }));
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Rebaixas');
+  XLSX.writeFile(workbook, `rebaixas-${today()}.xlsx`);
+}
+async function markRebaixaDone(id) {
+  const item = data.rebaixaItems.find((entry) => entry.id === id);
+  if (!item) return;
+  data.rebaixaItems = data.rebaixaItems.filter((entry) => entry.id !== id);
+  await save();
+  showTeamToast(`✅ ${item.name} marcado como preço alterado.`, 'success');
+  render();
+}
+
 let piquePhotoData = '';
 let piqueProductId = null;
 function openPiqueDialog(productId) {
@@ -1558,6 +1652,14 @@ function bind() {
   $('cancelExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
   $('excelFefoInput')?.addEventListener('change', readExcelFefoFile);
   $('confirmExcelFefo')?.addEventListener('click', confirmExcelFefoImport);
+  $('openRebaixaImport')?.addEventListener('click', openRebaixaImport);
+  $('exportRebaixaExcel')?.addEventListener('click', exportRebaixaExcel);
+  $('closeRebaixaExcel')?.addEventListener('click', () => $('rebaixaExcelDialog').close());
+  $('cancelRebaixaExcel')?.addEventListener('click', () => $('rebaixaExcelDialog').close());
+  $('rebaixaExcelInput')?.addEventListener('change', readRebaixaExcelFile);
+  $('confirmRebaixaExcel')?.addEventListener('click', confirmRebaixaExcelImport);
+  $('rebaixaSearch')?.addEventListener('input', (event) => { localStorage.setItem('vpa-rebaixa-search', event.target.value); render(); });
+  document.querySelectorAll('[data-rebaixa-done]').forEach((button) => button.addEventListener('click', () => markRebaixaDone(button.dataset.rebaixaDone)));
   $('closeFefoScanner')?.addEventListener('click', () => $('fefoScannerDialog').close());
   $('cancelFefoImport')?.addEventListener('click', () => $('fefoScannerDialog').close());
   $('runFefoOcr')?.addEventListener('click', runFefoOcr);
