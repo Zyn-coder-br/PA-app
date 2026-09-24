@@ -1,4 +1,4 @@
-const APP_VERSION = 'V40';
+const APP_VERSION = 'V43';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -370,6 +370,8 @@ let rebaixaInsertBuffer = new Map();
 let rebaixaInsertTimer = null;
 let rebaixaCompletionTimer = null;
 let rebaixaCompletionNoticeShown = false;
+let presenceTimer = null;
+let teamAdminRefreshTimer = null;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -907,6 +909,51 @@ function notifyPromotorProductEvent(payload) {
   showTeamToast((eventType === 'DELETE' ? '🗑 Produto removido do Promotor PA: ' : '🔄 Produto atualizado no Promotor PA: ') + name, 'success');
 }
 
+
+function isAdministrator() {
+  return String(window.VPA_PROFILE?.role || '').toLowerCase() === 'admin';
+}
+function roleLabel(role) {
+  return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador' }[role] || role || 'Usuário');
+}
+async function mergeCloudCorridors(shouldRender = true) {
+  if (!window.VPASupabase?.listCorridors || !window.VPASupabase.isConfigured()) return;
+  try {
+    const rows = await window.VPASupabase.listCorridors();
+    if (!Array.isArray(rows) || !rows.length) return;
+    const localByNumber = new Map(data.corridors.map((c) => [Number(c.number), c]));
+    data.corridors = rows.map((row) => {
+      const local = localByNumber.get(Number(row.corridor_number)) || {};
+      return { ...local, id: local.id || uid(), cloudId: row.id, number: Number(row.corridor_number), name: row.name || `Corredor ${row.corridor_number}`, active: row.active !== false, lastCheck: local.lastCheck || null };
+    });
+    await save();
+    if (shouldRender) render();
+  } catch (error) { console.warn('[VPA] Não foi possível carregar corredores compartilhados:', error.message || error); }
+}
+async function startPresenceHeartbeat() {
+  if (presenceTimer) return;
+  const beat = () => window.VPASupabase?.heartbeatPresence?.().catch((error) => console.warn('[VPA] Presença:', error.message || error));
+  await beat();
+  presenceTimer = window.setInterval(beat, 60000);
+}
+async function loadAdminTeamMembers() {
+  const target = $('adminTeamList');
+  if (!target || !isAdministrator() || !window.VPASupabase?.listTeamMembers) return;
+  target.innerHTML = '<div class="empty">Carregando usuários...</div>';
+  try {
+    const members = await window.VPASupabase.listTeamMembers();
+    target.innerHTML = members.length ? members.map((member) => {
+      const online = Boolean(member.online);
+      const role = String(member.role || 'operador');
+      return `<div class="team-admin-row"><div><strong>${esc(member.full_name || member.email || 'Usuário')}</strong><small>${esc(member.email || '')} · <span class="presence-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}</small></div><select data-team-role="${esc(member.id)}"><option value="operador" ${role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${role === 'chefe' ? 'selected' : ''}>Gerência</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`;
+    }).join('') : '<div class="empty">Nenhum usuário encontrado.</div>';
+    target.querySelectorAll('[data-team-role]').forEach((select) => select.addEventListener('change', async () => {
+      try { await window.VPASupabase.updateUserRole(select.dataset.teamRole, select.value); showTeamToast('✅ Categoria do usuário atualizada.', 'success'); }
+      catch (error) { showTeamToast('⚠️ Não foi possível alterar a categoria.', 'warning'); console.warn('[VPA] Alteração de categoria:', error); }
+    }));
+  } catch (error) { target.innerHTML = '<div class="empty">Não foi possível carregar os usuários. Execute a migração administrativa no Supabase.</div>'; console.warn('[VPA] Usuários:', error.message || error); }
+}
+
 async function initTeamRealtime() {
   if (teamRealtimeActive) return teamRealtimeChannel;
   if (teamRealtimeStarting) return teamRealtimeStarting;
@@ -919,6 +966,7 @@ async function initTeamRealtime() {
       return;
     }
     teamRealtimeUserId = session.user.id;
+    await mergeCloudCorridors(false);
     await mergeCloudBatidas(false);
     await mergeCloudProducts(false);
     await mergeCloudTemporaryBatchItems(false);
@@ -931,7 +979,8 @@ async function initTeamRealtime() {
     const rebaixaChannel = await window.VPASupabase.subscribeRebaixaItems(notifyRebaixaEvent);
     teamRealtimeChannel = { batidas: batidasChannel, products: productsChannel, promotor: promotorChannel, rebaixa: rebaixaChannel };
     teamRealtimeActive = true;
-    showTeamToast('🟢 Equipe online: batidas compartilhadas ativadas.', 'success');
+    await startPresenceHeartbeat();
+    showTeamToast('🟢 Equipe online: batidas e corredores compartilhados ativados.', 'success');
    } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
     return null;
@@ -984,10 +1033,13 @@ async function checkForAppUpdate() {
 }
 
 function settings() {
-  return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2></div></div>
-  <div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Produtos e batidas locais são sincronizados automaticamente após o login quando o banco está configurado. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? "🟢 Equipe conectada" : "🟡 Conexão aguardando"} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos locais para a nuvem usando o usuário autenticado. O registro local não é apagado se algum item falhar.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  const admin = isAdministrator();
+  const personal = `<div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
+  if (!admin) return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Seu perfil permite apenas ajustes pessoais e atualização do aplicativo.</p></div></div>${personal}`;
+  return `<div class="section-head"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Controle geral do sistema, usuários, sincronização e preferências.</p></div></div>${personal}
+  <div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração é aplicada no perfil do Supabase.</p><div id="adminTeamList" class="team-admin-list"><div class="empty">Carregando usuários...</div></div></div>
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? '🟢 Equipe conectada' : '🟡 Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1832,6 +1884,7 @@ function bind() {
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
+  if (isAdministrator()) loadAdminTeamMembers();
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
   $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
@@ -1880,7 +1933,7 @@ function bind() {
   $('closeCorridorsDialogBottom')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorManagerDialog')?.addEventListener('click', () => $('corridorManagerDialog').close());
   $('cancelCorridorManager')?.addEventListener('click', () => $('corridorManagerDialog').close());
-  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) c.name = name.value.trim() || `Corredor ${c.number}`; }); await save(); $('corridorManagerDialog').close(); render(); });
+  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const changes = []; data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) { c.name = name.value.trim() || `Corredor ${c.number}`; changes.push(c); } }); await save(); try { for (const c of changes) { if (c.cloudId && window.VPASupabase?.updateCorridorName) await window.VPASupabase.updateCorridorName(c.cloudId, c.name); } showTeamToast('☁️ Corredores atualizados para toda a equipe.', 'success'); } catch (error) { showTeamToast('⚠️ Os nomes foram salvos localmente, mas não foram enviados à nuvem.', 'warning'); console.warn('[VPA] Atualização de corredores:', error); } $('corridorManagerDialog').close(); render(); });
   $('allCorridors')?.addEventListener('click', showCorridors);
   $('reportsShortcut')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBtn')?.addEventListener('click', () => { view = 'reports'; render(); });

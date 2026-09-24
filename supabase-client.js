@@ -499,6 +499,45 @@
     return result.data;
   }
 
+
+  async function listCorridors() {
+    const client = await init();
+    const result = await client.from('corridors').select('id, corridor_number, name, active').eq('active', true).order('corridor_number', { ascending: true });
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function updateCorridorName(corridorId, name) {
+    const client = await init();
+    const result = await client.from('corridors').update({ name: String(name || '').trim() }).eq('id', corridorId).select('id, corridor_number, name, active').single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function heartbeatPresence() {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) return null;
+    const result = await client.from('vpa_user_presence').upsert({ user_id: session.user.id, last_seen: new Date().toISOString() }, { onConflict: 'user_id' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function listTeamMembers() {
+    const client = await init();
+    const result = await client.rpc('vpa_admin_list_team_members');
+    if (result.error) throw result.error;
+    return result.data || [];
+  }
+
+  async function updateUserRole(userId, role) {
+    const client = await init();
+    const result = await client.rpc('vpa_admin_update_user_role', { p_user_id: userId, p_role: role });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+
   async function updatePromotorProductTag(productId, tag) {
     const client = await init();
     const result = await client.rpc('tag_promotor_product_from_vpa', { p_product_id: productId, p_tag: tag });
@@ -536,6 +575,11 @@
     updatePassword: updatePassword,
     signOut: signOut,
     getProfile: getProfile,
+    listCorridors: listCorridors,
+    updateCorridorName: updateCorridorName,
+    heartbeatPresence: heartbeatPresence,
+    listTeamMembers: listTeamMembers,
+    updateUserRole: updateUserRole,
     syncProduct: syncProduct,
     syncProducts: syncProducts,
     syncTemporaryBatchItem: syncTemporaryBatchItem,
