@@ -238,19 +238,31 @@ function daysToDateValue(date) {
 async function notifyOverdueCorridors() {
   const overdue = data.corridors.filter((c) => daysWithoutCheck(c) === null || daysWithoutCheck(c) >= 15);
   if (!overdue.length || !('Notification' in window) || Notification.permission !== 'granted') return;
+
   const key = `vpa-overdue-corridors-${today()}`;
   const already = JSON.parse(localStorage.getItem(key) || '[]');
   const fresh = overdue.filter((c) => !already.includes(c.id));
   if (!fresh.length) return;
+
   try {
     const registration = await navigator.serviceWorker?.ready;
-    for (const c of fresh) {
-      const days = daysWithoutCheck(c);
-      const options = { body: `${c.name}: ${days === null ? 'nunca conferido' : days + ' dias sem supervisão'}. Faça uma batida de validade.`, icon: './icons/notification-small.png', badge: './icons/notification-small.png', tag: `vpa-corridor-overdue-${c.id}`, renotify: true, data: { url: './' } };
-      if (registration?.showNotification) await registration.showNotification('Vencimento PA · Corredor em atraso', options);
-      else new Notification('Vencimento PA · Corredor em atraso', options);
-    }
-    localStorage.setItem(key, JSON.stringify([...already, ...fresh.map((c) => c.id)]));
+    const count = overdue.length;
+    const label = count === 1 ? 'corredor' : 'corredores';
+    const body = `Existem ${count} ${label} sem batida registrada ou com 15 dias ou mais sem conferência. Faça uma batida de validade.`;
+    const title = 'Vencimento PA · Resumo de batidas';
+    const options = {
+      body,
+      icon: './icons/notification-small.png',
+      badge: './icons/notification-small.png',
+      tag: 'vpa-overdue-corridors-summary',
+      renotify: false,
+      data: { url: './' }
+    };
+
+    if (registration?.showNotification) await registration.showNotification(title, options);
+    else new Notification(title, options);
+
+    localStorage.setItem(key, JSON.stringify([...new Set([...already, ...fresh.map((c) => c.id)])]));
   } catch (error) { console.warn('[VPA] Não foi possível notificar corredores em atraso:', error); }
 }
 function dashboard() {
