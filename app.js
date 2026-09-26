@@ -168,7 +168,13 @@ function sortByActivity(list) {
   });
 }
 function groupedProductRows(list, options = {}) {
-  const sorted = sortByActivity(list);
+  // Ordenação principal por validade crescente: o produto que vence primeiro
+  // sempre aparece antes dos demais. Em empate, usa a data de registro e o nome.
+  const sorted = list.slice().sort((a, b) => {
+    const av = String(a.expiry || '9999-12-31');
+    const bv = String(b.expiry || '9999-12-31');
+    return av.localeCompare(bv) || String(activityDateValue(a) || '').localeCompare(String(activityDateValue(b) || '')) || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR');
+  });
   const groups = [];
   const byKey = new Map();
   sorted.forEach((p) => {
@@ -176,6 +182,12 @@ function groupedProductRows(list, options = {}) {
     const key = raw ? new Date(raw).toISOString().slice(0, 10) : 'unknown';
     if (!byKey.has(key)) { const group = { key, label: raw ? activityDateLabel(raw) : 'Data de registro não informada', items: [] }; byKey.set(key, group); groups.push(group); }
     byKey.get(key).items.push(p);
+  });
+  // A ordem dos grupos acompanha a menor validade encontrada em cada grupo.
+  groups.sort((a, b) => {
+    const av = String(a.items[0]?.expiry || '9999-12-31');
+    const bv = String(b.items[0]?.expiry || '9999-12-31');
+    return av.localeCompare(bv);
   });
   return groups.map((g) => `<div class="activity-group"><div class="activity-group-head">📅 ${esc(g.label)} <span>${g.items.length} produto${g.items.length === 1 ? '' : 's'}</span></div>${g.items.map((p) => productRow(p, options)).join('')}</div>`).join('');
 }

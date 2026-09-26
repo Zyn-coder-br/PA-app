@@ -1,6 +1,6 @@
 {
-  "version": "V46-filtro-validade",
-  "base": "V45 + layout-teste-02-fefo-bulk",
-  "description": "Filtro de produtos por mês de validade aplicado ao catálogo geral, FEFO e Promotor, preservando busca, empresa e seleção em massa.",
+  "version": "V47-ordem-validade-crescente",
+  "base": "V46-filtro-validade",
+  "description": "Ordenação crescente por data de validade no catálogo de Produtos, FEFO e Promotor, preservando o filtro mensal, busca e seleção em massa.",
   "date": "2026-09-26"
 }
