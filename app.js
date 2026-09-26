@@ -1605,12 +1605,24 @@ async function confirmExcelFefoImport() {
   imported.forEach(p => data.products.push(p));
   await save();
   try {
+    $('excelFefoStatus').textContent = `Enviando ${imported.length} produto(s) ao banco compartilhado em lotes...`;
     const result = await window.VPASupabase?.syncProducts?.(imported.map(p => ({...p, corridorNumber:corridor?.number})));
-    if (result?.failed) showTeamToast(`⚠️ ${result.failed} item(ns) ficaram salvos localmente e não foram enviados.`, 'warning');
-    else if (result?.synced) { imported.forEach(p => p.syncPending=false); await save(); showTeamToast(`☁️ ${result.synced} produto(s) importado(s) para o banco compartilhado.`, 'success'); }
-    else showTeamToast('✅ Produtos importados localmente.', 'success');
+    if (result?.syncedIds) {
+      const syncedSet = new Set(result.syncedIds.map(String));
+      imported.forEach(p => { if (syncedSet.has(String(p.id))) p.syncPending = false; });
+      await save();
+    }
+    if (result?.failed) {
+      const firstErrors = (result.errors || []).slice(0, 3).map(e => `${e.name}: ${e.message}`).join(' | ');
+      $('excelFefoStatus').textContent = `Importação concluída: ${result.synced || 0} enviado(s), ${result.failed} com falha.`;
+      showTeamToast(`⚠️ Importação FEFO: ${result.synced || 0} enviados e ${result.failed} com falha.${firstErrors ? ` ${firstErrors}` : ''}`, 'warning');
+    } else if (result?.synced) {
+      $('excelFefoStatus').textContent = `Importação concluída: ${result.synced} de ${result.total} produto(s) enviados ao banco compartilhado.`;
+      showTeamToast(`☁️ ${result.synced} produto(s) FEFO importado(s) para o banco compartilhado.`, 'success');
+    } else showTeamToast('✅ Produtos importados localmente.', 'success');
   } catch (error) {
     console.warn('[VPA] Sincronização da planilha falhou:', error);
+    $('excelFefoStatus').textContent = 'Falha na sincronização: os produtos permanecem salvos localmente.';
     showTeamToast('⚠️ Produtos salvos localmente, mas não enviados ao Supabase.', 'warning');
   }
   $('excelFefoDialog').close();

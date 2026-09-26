@@ -341,21 +341,163 @@
   }
 
   async function syncProducts(products) {
-    // Proteção V45: não permitir que a sincronização geral publique
-    // itens que ainda pertencem à preparação de uma batida.
+    // Sincronização em massa: resolve os corredores uma única vez e envia
+    // os produtos em lotes. Isso evita centenas/milhares de requisições
+    // sequenciais durante importações FEFO grandes.
     const list = (Array.isArray(products) ? products : [])
       .filter((product) => !product?.isTemporaryBatchItem);
-    const results = { total: list.length, synced: 0, failed: 0, errors: [] };
+    const results = { total: list.length, synced: 0, failed: 0, syncedIds: [], errors: [] };
+    if (!list.length) return results;
+
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user) throw new Error('Nenhuma sessão autenticada encontrada.');
+
+    const numbers = Array.from(new Set(list
+      .map((product) => Number(product.corridorNumber ?? product.corridor?.number))
+      .filter((number) => Number.isFinite(number))));
+    if (!numbers.length) {
+      for (const product of list) {
+        results.failed += 1;
+        results.errors.push({ id: product?.id || null, name: product?.name || 'Produto', message: 'Corredor local sem número válido.' });
+      }
+      return results;
+    }
+
+    const corridorResult = await client
+      .from('corridors')
+      .select('id, corridor_number')
+      .in('corridor_number', numbers)
+      .eq('active', true);
+    if (corridorResult.error) throw corridorResult.error;
+
+    const corridorsByNumber = new Map((corridorResult.data || []).map((row) => [Number(row.corridor_number), row]));
+
+    const statusMapBulk = {
+      corredor: 'in_corridor',
+      vencimento: 'found',
+      separado: 'separated',
+      resolvido: 'resolved'
+    };
+
+    const payloadFor = (product) => {
+      const number = Number(product.corridorNumber ?? product.corridor?.number);
+      const corridor = corridorsByNumber.get(number);
+      if (!corridor) throw new Error('Corredor ' + number + ' não encontrado no Supabase. Cadastre-o na tabela corridors antes de sincronizar.');
+      const name = String(product.name || '').trim();
+      if (!name) throw new Error('Produto sem nome.');
+      return {
+        id: product.id,
+        name,
+        ean: product.ean ? String(product.ean).trim() : null,
+        photo_url: product.photoCloudUrl || null,
+        corridor_id: corridor.id,
+        quantity_found: Math.max(0, Number(product.quantity || product.quantityFound || 0)),
+        quantity_separated: Math.max(0, Number(product.quantitySeparated || 0)),
+        expiration_date: product.expiry || null,
+        status: statusMapBulk[product.status] || 'found',
+        registered_by: session.user.id,
+        app_metadata: {
+          fefo: Boolean(product.fefo),
+          promotor: Boolean(product.promotor),
+          piqueConcluido: Boolean(product.piqueConcluido),
+          piqueAt: product.piqueAt || null,
+          piqueTipo: product.piqueTipo || null,
+          batchId: product.batchId || null,
+          createdAt: product.createdAt || null,
+          origemCadastro: product.origemCadastro || null,
+          categoriaCadastro: product.categoriaCadastro || null,
+          tag: product.tag || '',
+          plu: product.plu ? String(product.plu).trim() : null,
+          storeNumber: product.storeNumber ? String(product.storeNumber).trim() : null
+        }
+      };
+    };
+
+    const payloads = [];
     for (const product of list) {
       try {
-        const number = product.corridorNumber ?? product.corridor?.number;
-        await syncProduct(product, number);
-        results.synced += 1;
+        payloads.push({ product, payload: payloadFor(product) });
       } catch (error) {
         results.failed += 1;
-        results.errors.push({ id: product?.id || null, name: product?.name || 'Produto', message: error?.message || 'Falha desconhecida' });
+        results.errors.push({ id: product?.id || null, name: product?.name || 'Produto', message: error?.message || 'Falha ao preparar produto.' });
       }
     }
+
+    // Lotes de 100 reduzem o número de chamadas sem criar requisições grandes demais.
+    const CHUNK_SIZE = 100;
+    for (let offset = 0; offset < payloads.length; offset += CHUNK_SIZE) {
+      const chunk = payloads.slice(offset, offset + CHUNK_SIZE);
+      try {
+        const result = await client.from('products').upsert(
+          chunk.map((item) => item.payload),
+          { onConflict: 'id' }
+        ).select('id');
+        if (result.error) throw result.error;
+
+        const returnedIds = new Set((result.data || []).map((row) => String(row.id)));
+        // O Supabase deve devolver todos os IDs do lote. Só marcamos como
+        // sincronizado aquilo que foi efetivamente confirmado na resposta.
+        for (const item of chunk) {
+          if (returnedIds.has(String(item.product.id))) {
+            results.synced += 1;
+            results.syncedIds.push(String(item.product.id));
+          } else {
+            results.failed += 1;
+            results.errors.push({ id: item.product.id, name: item.product.name || 'Produto', message: 'Produto não retornado pelo Supabase após o upsert.' });
+          }
+        }
+      } catch (error) {
+        // Se um lote falhar, dividimos o lote recursivamente para identificar
+        // exatamente os registros problemáticos, sem perder os demais.
+        const queue = [chunk];
+        while (queue.length) {
+          const current = queue.shift();
+          if (current.length === 1) {
+            try {
+              const single = await client.from('products').upsert([current[0].payload], { onConflict: 'id' }).select('id').single();
+              if (single.error) throw single.error;
+              if (!single.data?.id) throw new Error('Supabase não retornou o ID do produto.');
+              results.synced += 1;
+              results.syncedIds.push(String(single.data.id));
+            } catch (singleError) {
+              results.failed += 1;
+              results.errors.push({ id: current[0].product.id, name: current[0].product.name || 'Produto', message: singleError?.message || 'Falha desconhecida.' });
+            }
+            continue;
+          }
+          const middle = Math.ceil(current.length / 2);
+          const left = current.slice(0, middle);
+          const right = current.slice(middle);
+          // Tenta cada metade; se uma metade falhar, ela volta para a fila e
+          // é dividida novamente até chegar ao produto causador do erro.
+          for (const part of [left, right]) {
+            try {
+              const partResult = await client.from('products').upsert(part.map((item) => item.payload), { onConflict: 'id' }).select('id');
+              if (partResult.error) throw partResult.error;
+              const returned = new Set((partResult.data || []).map((row) => String(row.id)));
+              for (const item of part) {
+                if (returned.has(String(item.product.id))) {
+                  results.synced += 1;
+                  results.syncedIds.push(String(item.product.id));
+                } else {
+                  results.failed += 1;
+                  results.errors.push({ id: item.product.id, name: item.product.name || 'Produto', message: 'Produto não retornado pelo Supabase após o upsert.' });
+                }
+              }
+            } catch (_) {
+              queue.push(part);
+            }
+          }
+        }
+      }
+    }
+
+    console.info('[VPA] Sincronização em massa concluída:', {
+      total: results.total,
+      synced: results.synced,
+      failed: results.failed
+    });
     return results;
   }
 

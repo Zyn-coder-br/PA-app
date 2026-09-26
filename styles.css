@@ -977,3 +977,43 @@ body{
 /* V41 - Modal de rebaixa fechado não ocupa espaço na página. */
 .rebaixa-import-dialog:not([open]){display:none!important}
 .team-admin-list{display:grid;gap:10px;margin-top:12px}.team-admin-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.team-admin-row strong{display:block}.team-admin-row small{display:block;color:var(--muted);margin-top:4px}.team-admin-row select{min-width:130px;max-width:180px}.presence-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 4px}.presence-dot.online{background:#22a06b}.presence-dot.offline{background:#a7b0ad}@media(max-width:600px){.team-admin-row{align-items:flex-start;flex-direction:column}.team-admin-row select{width:100%;max-width:none}}
+
+/* =========================================================
+   VPA LAYOUT TEST 01 — adaptação visual inspirada no Figma
+   Apenas apresentação: não altera regras de negócio ou dados.
+   ========================================================= */
+:root{
+  --figma-green:#08a64a;
+  --figma-green-dark:#07843c;
+  --figma-green-soft:#eaf8ef;
+  --figma-border:#e7ece9;
+  --figma-text:#1c2521;
+  --figma-muted:#7b8580;
+}
+body{background:#f6f8f7;color:var(--figma-text)}
+.app-header{background:#fff;border-bottom:1px solid var(--figma-border);padding-top:14px;padding-bottom:14px}
+.brand-area{gap:10px}
+.brand-mark{width:40px;height:40px;display:grid;place-items:center;border-radius:12px;overflow:hidden;background:var(--figma-green-soft)}
+.brand-mark img{width:100%;height:100%;object-fit:contain}
+.brand-name{font-size:clamp(19px,3.4vw,28px);letter-spacing:-.8px}
+.brand-name span{color:var(--figma-green)}
+.brand-subtitle{color:var(--figma-green-dark);font-weight:700}
+.avatar{background:var(--figma-green);color:#fff;width:38px;height:38px;font-size:16px}
+.header-menu-button{border:0;background:transparent;color:#53615a;font-size:23px;line-height:1;padding:6px}
+#view{padding-top:6px}
+.stat,.panel{border-color:var(--figma-border);box-shadow:0 3px 14px rgba(28,65,43,.045)}
+.stat,.panel{background:#fff}
+.primary{background:var(--figma-green);border-radius:12px}
+.primary:hover{background:var(--figma-green-dark)}
+.bottom-nav{border-top:1px solid var(--figma-border);box-shadow:0 -4px 18px rgba(28,65,43,.045)}
+.bottom-nav button.active{background:var(--figma-green-soft);color:var(--figma-green-dark)}
+@media(min-width:801px){
+  #app{max-width:1180px;margin:0 auto;min-height:100vh;background:#f6f8f7}
+  .bottom-nav{left:50%;right:auto;width:min(1180px,100%);transform:translateX(-50%)}
+}
+@media(max-width:470px){
+  .app-header{padding:12px 14px 10px}
+  .brand-mark{width:36px;height:36px;border-radius:10px}
+  .brand-name{font-size:18px}
+  .brand-subtitle{font-size:9px}
+}
