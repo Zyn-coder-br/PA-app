@@ -1,6 +1,6 @@
 {
-  "version": "layout-teste-02-fefo-bulk",
-  "base": "V45 + layout-teste-01",
-  "description": "Correção da importação FEFO em massa: consulta única de corredores, envio em lotes de 100, confirmação por ID e identificação individual de falhas.",
+  "version": "V46-filtro-validade",
+  "base": "V45 + layout-teste-02-fefo-bulk",
+  "description": "Filtro de produtos por mês de validade aplicado ao catálogo geral, FEFO e Promotor, preservando busca, empresa e seleção em massa.",
   "date": "2026-09-26"
 }

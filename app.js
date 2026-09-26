@@ -8,12 +8,27 @@ let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
 let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
 let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') || 'all';
+let expiryMonthFilter = localStorage.getItem('vpa-expiry-month-filter') || 'all';
 const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random());
 const fmt = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const expiryMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function productExpiryMonth(product) {
+  const raw = String(product?.expiry || '').trim();
+  if (!raw) return null;
+  let m = raw.match(/^\d{4}[-/]?(\d{2})[-/]?\d{2}/);
+  if (m) return Number(m[1]);
+  m = raw.match(/^\d{1,2}[\/-](\d{1,2})[\/-]\d{2,4}$/);
+  if (m) return Number(m[1]);
+  return null;
+}
+function matchesExpiryMonth(product) {
+  return expiryMonthFilter === 'all' || String(productExpiryMonth(product) || '') === String(expiryMonthFilter);
+}
+
 
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
@@ -297,6 +312,7 @@ function products() {
   const allVisible = visibleProducts();
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
+  list = list.filter(matchesExpiryMonth);
   const searchValue = localStorage.getItem('vpa-product-search') || '';
   const promotorCompanies = Array.from(new Set(allVisible.filter((p) => p.promotor && p.company).map((p) => String(p.company).trim()).filter(Boolean))).sort((a,b) => a.localeCompare(b, 'pt-BR'));
   if (filter === 'promotor' && promotorCompanyFilter !== 'all') list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
@@ -313,7 +329,7 @@ function products() {
   const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
   const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
-        <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div>
+        <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div><label class="expiry-month-filter-label" for="expiryMonthFilter">Validade<select id="expiryMonthFilter" class="expiry-month-filter"><option value="all" ${expiryMonthFilter === 'all' ? 'selected' : ''}>Todos os meses</option>${expiryMonths.map((month,index) => `<option value="${index+1}" ${String(expiryMonthFilter) === String(index+1) ? 'selected' : ''}>${month}</option>`).join('')}</select></label>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
@@ -1414,7 +1430,7 @@ function currentProductSelection() {
 }
 function visibleProductIdsForCurrentFilter() {
   const filter = productFilter;
-  return visibleProducts().filter((p) => filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : true).map((p) => p.id);
+  return visibleProducts().filter((p) => (filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : true) && matchesExpiryMonth(p)).map((p) => p.id);
 }
 function openBulkStatusDialog() {
   const ids = currentProductSelection();
@@ -1984,6 +2000,7 @@ function bind() {
   }));
   document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); render(); }));
   $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); render(); });
+  $('expiryMonthFilter')?.addEventListener('change', (e) => { expiryMonthFilter = e.target.value; localStorage.setItem('vpa-expiry-month-filter', expiryMonthFilter); render(); });
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
 
   const toggleAllProducts = () => { const ids = visibleProductIdsForCurrentFilter(); const allSelected = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => allSelected ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); };
@@ -2047,6 +2064,7 @@ function refreshProductsSearchResults() {
   const q = searchValue.trim().toLowerCase();
   const allVisible = visibleProducts();
   let list = allVisible.filter((p) => productFilter === 'fefo' ? Boolean(p.fefo) : productFilter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
+  list = list.filter(matchesExpiryMonth);
   if (productFilter === 'promotor' && promotorCompanyFilter !== 'all') {
     list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
   }
