@@ -1,14 +1,16 @@
-const APP_VERSION = 'V45';
+const APP_VERSION = 'V48';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
-let data = { corridors: [], products: [], batches: [], activeBatchId: null, rebaixaItems: [] };
+let data = { corridors: [], products: [], batches: [], activeBatchId: null, rebaixaItems: [], criticalItems: [] };
 let view = localStorage.getItem('vpa-view') || 'dashboard';
 let theme = localStorage.getItem('vpa-theme') || 'light';
 let batchTab = localStorage.getItem('vpa-batch-tab') || 'current';
 let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
 let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') || 'all';
 let expiryMonthFilter = localStorage.getItem('vpa-expiry-month-filter') || 'all';
+let criticalPage = Number(localStorage.getItem('vpa-critical-page') || 1) || 1;
+let criticalSearch = localStorage.getItem('vpa-critical-search') || '';
 const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -16,6 +18,52 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + 
 const fmt = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const expiryMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function uiIcon(name, size = 18) {
+  const paths = {
+    box:'<rect x="3" y="4" width="18" height="17" rx="3"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    calendar:'<rect x="3" y="5" width="18" height="17" rx="3"/><path d="M7 3v4M17 3v4M3 10h18"/>',
+    camera:'<path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="4"/>',
+    search:'<circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/>',
+    file:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+    chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    alert:'<path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17h.01"/>',
+    tag:'<path d="M3 5v6l10 10 8-8L11 3H5a2 2 0 0 0-2 2Z"/><circle cx="7" cy="7" r="1"/>',
+    trash:'<path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/>',
+    cart:'<path d="M3 4h2l2.2 10.5a2 2 0 0 0 2 1.5h8.7a2 2 0 0 0 1.9-1.4L21 8H6"/><circle cx="10" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/>',
+    users:'<circle cx="9" cy="8" r="3"/><path d="M3 20c.4-3.5 2.2-5 6-5s5.6 1.5 6 5M16 11c3.2-.2 4.8 1.4 5 4M16 5.5a3 3 0 0 1 0 5.5"/>',
+    refresh:'<path d="M20 11a8 8 0 0 0-14-4L3 10M3 5v5h5M4 13a8 8 0 0 0 14 4l3-3M21 19v-5h-5"/>',
+    check:'<path d="m5 12 4 4L19 6"/>',
+    filter:'<path d="M3 5h18M6 12h12M10 19h4"/>',
+    upload:'<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>'
+  };
+  const body = paths[name] || paths.box;
+  return `<span class="ui-icon" aria-hidden="true"><svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${body}</svg></span>`;
+}
+function normalizeProductKey(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'');
+}
+function productDuplicateKey(product) {
+  const ean = normalizeProductKey(product?.ean);
+  if (ean) return `ean:${ean}`;
+  const name = normalizeProductKey(product?.name);
+  return name ? `name:${name}` : '';
+}
+function findExistingProduct(product) {
+  const key = productDuplicateKey(product);
+  if (!key) return null;
+  return data.products.find((p) => productDuplicateKey(p) === key) || null;
+}
+function normalizeCriticalKey(item) {
+  const ean = normalizeProductKey(item?.ean);
+  if (ean) return `ean:${ean}`;
+  const name = normalizeProductKey(item?.name);
+  return name ? `name:${name}` : '';
+}
+function findCriticalItem(item) {
+  const key = normalizeCriticalKey(item);
+  if (!key) return null;
+  return data.criticalItems.find((x) => normalizeCriticalKey(x) === key) || null;
+}
 function productExpiryMonth(product) {
   const raw = String(product?.expiry || '').trim();
   if (!raw) return null;
@@ -71,7 +119,9 @@ function seed() {
   data.batches ||= [];
   data.activeBatchId ||= null;
   data.rebaixaItems ||= [];
+  data.criticalItems ||= [];
   data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
+  data.criticalItems = data.criticalItems.map((item) => ({ ...item, id: item.id || uid(), ean: String(item.ean || '').trim(), name: String(item.name || '').trim(), quantity: Number(item.quantity || 0) }));
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
@@ -137,7 +187,7 @@ function loggedDisplayName() {
 }
 function productImage(p) {
   if (p.photo) return `<img src="${esc(p.photo)}" alt="${esc(p.name || 'Produto')}" loading="lazy">`;
-  return '📦';
+  return uiIcon('box', 24);
 }
 function photoPreview(p) {
   if (!p?.photo) return '';
@@ -189,7 +239,7 @@ function groupedProductRows(list, options = {}) {
     const bv = String(b.items[0]?.expiry || '9999-12-31');
     return av.localeCompare(bv);
   });
-  return groups.map((g) => `<div class="activity-group"><div class="activity-group-head">📅 ${esc(g.label)} <span>${g.items.length} produto${g.items.length === 1 ? '' : 's'}</span></div>${g.items.map((p) => productRow(p, options)).join('')}</div>`).join('');
+  return groups.map((g) => `<div class="activity-group"><div class="activity-group-head">${uiIcon('calendar', 15)} ${esc(g.label)} <span>${g.items.length} produto${g.items.length === 1 ? '' : 's'}</span></div>${g.items.map((p) => productRow(p, options)).join('')}</div>`).join('');
 }
 function groupedPendingCards(list) {
   const sorted = sortByActivity(list);
@@ -201,7 +251,7 @@ function groupedPendingCards(list) {
     if (!byKey.has(key)) { const group = { key, label: raw ? activityDateLabel(raw) : 'Data de registro não informada', items: [] }; byKey.set(key, group); groups.push(group); }
     byKey.get(key).items.push(p);
   });
-  return groups.map((g) => `<div class="activity-group pending-activity-group"><div class="activity-group-head">📅 ${esc(g.label)} <span>${g.items.length} produto${g.items.length === 1 ? '' : 's'}</span></div>${g.items.map(pendingProductCard).join('')}</div>`).join('');
+  return groups.map((g) => `<div class="activity-group pending-activity-group"><div class="activity-group-head">${uiIcon('calendar', 15)} ${esc(g.label)} <span>${g.items.length} produto${g.items.length === 1 ? '' : 's'}</span></div>${g.items.map(pendingProductCard).join('')}</div>`).join('');
 }
 function productRow(p, options = {}) {
   const c = data.corridors.find((x) => x.id === p.corridorId);
@@ -313,15 +363,31 @@ function dashboard() {
     <div class="hero-status"><span></span> Sistema ativo</div>
   </section>
   <div class="stats"><div class="stat ok"><div class="stat-icon">▣</div><div class="num">${visibleProducts().length}</div><div class="label">Produtos</div><div class="sub">cadastrados no local</div></div><div class="stat alert"><div class="stat-icon">!</div><div class="num">${critical}</div><div class="label">Críticos</div><div class="sub">vencem em até 7 dias</div></div><div class="stat warning"><div class="stat-icon">◷</div><div class="num">${attention}</div><div class="label">Em atenção</div><div class="sub">vencem em 8–15 dias</div></div><div class="stat blue"><div class="stat-icon">✓</div><div class="num">${resolved}</div><div class="label">Resolvidos</div><div class="sub">status concluído</div></div></div>
-  <div class="panel-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">▦ Batida de hoje</div><div class="panel-sub">${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div></div><span>📅</span></div><button class="primary big-action" id="newBatch">▶ Iniciar Batida <span>›</span></button><button class="secondary soft-action" id="continueBatch">↻ Continuar última batida <span>›</span></button></section>
-  <section class="panel"><div class="panel-head"><div class="panel-title">◎ Progresso do mês</div><span class="panel-sub">${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="progress-row"><span>${checked} de ${corridorTotal} corredores</span><strong>${progress}%</strong></div><div class="mini-grid"><div class="mini"><strong>${checked}</strong><span>Concluídos</span></div><div class="mini warning"><strong>${Math.max(0, corridorTotal - checked)}</strong><span>Pendentes</span></div><div class="mini danger"><strong>${data.corridors.filter((c) => c.lastCheck && Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length}</strong><span>Atrasados</span></div></div><div class="goal">🏆 Meta: conferir todos os corredores pelo menos 1 vez a cada 15 dias.</div></section></div>
+  <div class="panel-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">▦ Batida de hoje</div><div class="panel-sub">${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div></div><span>${uiIcon('calendar',18)}</span></div><button class="primary big-action" id="newBatch">▶ Iniciar Batida <span>›</span></button><button class="secondary soft-action" id="continueBatch">Continuar última batida <span>›</span></button></section>
+  <section class="panel"><div class="panel-head"><div class="panel-title">◎ Progresso do mês</div><span class="panel-sub">${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="progress-row"><span>${checked} de ${corridorTotal} corredores</span><strong>${progress}%</strong></div><div class="mini-grid"><div class="mini"><strong>${checked}</strong><span>Concluídos</span></div><div class="mini warning"><strong>${Math.max(0, corridorTotal - checked)}</strong><span>Pendentes</span></div><div class="mini danger"><strong>${data.corridors.filter((c) => c.lastCheck && Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length}</strong><span>Atrasados</span></div></div><div class="goal">${uiIcon('chart',18)} Meta: conferir todos os corredores pelo menos 1 vez a cada 15 dias.</div></section></div>
   <section class="panel" style="margin-top:14px"><div class="panel-head"><div class="panel-title">⌖ Próximo corredor sugerido</div><span class="priority">PRIORIDADE</span><span class="panel-sub">${corridor.lastCheck ? 'Há ' + days + ' dias sem batida' : 'Ainda não conferido'}</span></div><div class="suggested"><div class="suggested-main"><div class="corridor-icon">▥</div><div><strong>${esc(corridor.name)}</strong><small>Prioridade automática pela última conferência</small></div></div><button class="secondary" id="allCorridors">☷ Ver todos</button></div></section>
   <div class="two-panels"><section class="panel"><div class="panel-head"><div class="panel-title">◷ Vencem em breve</div><button class="text-btn" data-view="expiries">Ver todos</button></div><div class="list">${upcoming.map((p) => productRow(p)).join('') || '<div class="empty">Nenhum produto cadastrado.</div>'}</div></section><section class="panel"><div class="panel-head"><div class="panel-title">♧ Atividades da equipe</div><button class="text-btn" id="reportsShortcut">Ver todas</button></div><div class="list"><div class="team-row"><div class="team-person"><div class="team-avatar">${esc(loggedDisplayName().charAt(0).toUpperCase())}</div><div><div class="product-name">${esc(loggedDisplayName())}</div><div class="meta">${esc(window.VPA_PROFILE?.role || 'Usuário')} · atividade local</div></div></div><strong class="team-count">${data.products.length}</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar blue">L</div><div><div class="product-name">Luan</div><div class="meta">Pleno 1 · sem sincronização</div></div></div><strong class="team-count">—</strong></div><div class="team-row"><div class="team-person"><div class="team-avatar gray">W</div><div><div class="product-name">Wagner</div><div class="meta">Chefe · sem sincronização</div></div></div><strong class="team-count">—</strong></div></div><button class="secondary report-button" id="reportsBtn">▥ Ver relatórios</button></section></div>`;
 }
+function criticalListPage() {
+  const q = String(criticalSearch || '').trim().toLowerCase();
+  let list = data.criticalItems.slice().sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+  if (q) list = list.filter((item) => `${item.name || ''} ${item.ean || ''}`.toLowerCase().includes(q));
+  const totalPages = Math.max(1, Math.ceil(list.length / 20));
+  criticalPage = Math.min(Math.max(1, criticalPage), totalPages);
+  const start = (criticalPage - 1) * 20;
+  const pageItems = list.slice(start, start + 20);
+  const rows = pageItems.map((item) => `<div class="critical-row"><div class="critical-index">${start + pageItems.indexOf(item) + 1}</div><div class="critical-main"><div class="critical-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">EAN: ${esc(item.ean || 'Não informado')}</div></div><div class="critical-stock"><span>Estoque</span><strong>${Number(item.quantity || 0)}</strong></div><button type="button" class="critical-delete" data-critical-delete="${esc(item.id)}" aria-label="Remover ${esc(item.name)}" title="Remover produto">${uiIcon('trash',16)}</button></div>`).join('');
+  const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="criticalPrev" ${criticalPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${criticalPage}</strong> de ${totalPages}</span><button type="button" class="secondary" id="criticalNext" ${criticalPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
+  return `<div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 20 itens.</p></div></div>
+  <div class="products-overview"><div class="product-stat-card"><div class="product-stat-icon red">${uiIcon('alert',18)}</div><div><strong>${list.length}</strong><span>Produtos críticos</span></div></div><div class="product-stat-card"><div class="product-stat-icon blue">${uiIcon('file',18)}</div><div><strong>20</strong><span>Itens por página</span></div></div></div>
+  <div class="products-filter-panel critical-panel"><div class="critical-toolbar"><div class="products-search-wrap"><span>${uiIcon('search',16)}</span><input class="search compact-search" id="criticalSearch" placeholder="Buscar por EAN ou descrição..." value="${esc(criticalSearch)}"></div><button type="button" class="primary" id="openCriticalImport">${uiIcon('upload',16)} Importar Excel</button></div>
+  <div class="critical-list-head"><span>#</span><span>Produto</span><span>Quantidade</span><span></span></div><div class="critical-list">${rows || '<div class="empty">Nenhum produto na Lista Crítica. Importe uma planilha Excel para começar.</div>'}</div>${pagination}</div>`;
+}
 function products() {
-  const filters = [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
+  const filters = [['all','Todos'],['fefo','Produtos FEFO'],['critical','Lista Crítica'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   const filter = productFilter;
   const allVisible = visibleProducts();
+  if (filter === 'critical') return `<section class="products-page">${criticalListPage()}</section>`;
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
   list = list.filter(matchesExpiryMonth);
@@ -347,13 +413,13 @@ function products() {
       </div>
       <div class="list products-list" id="productList">${groupedProductRows(list,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>
       <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
-        <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">☷</button>
+        <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">${uiIcon('filter',19)}</button>
         <div class="bulk-actions-menu" id="bulkActionsMenu" hidden>
           <button type="button" class="primary" id="newProduct">＋ Adicionar produto</button>
           <button type="button" class="secondary" id="floatingSelectAll">☑ Marcar/desmarcar tudo</button>
           <button type="button" class="secondary" id="floatingBulkStatus">↔ Alterar status</button>
-          <button type="button" class="secondary" id="floatingQuickTag">🏷 Adicionar tag</button>
-          <button type="button" class="secondary danger-btn" id="floatingDeleteSelected">🗑 Excluir selecionados</button>
+          <button type="button" class="secondary" id="floatingQuickTag">${uiIcon('tag',16)} Adicionar tag</button>
+          <button type="button" class="secondary danger-btn" id="floatingDeleteSelected">${uiIcon('trash',16)} Excluir selecionados</button>
         </div>
       </div>`;
   return `<section class="products-page">
@@ -427,7 +493,7 @@ function pendingProductCard(p) {
   const label = d < 0 ? 'VENCIDO' : d === 0 ? 'VENCE HOJE' : d === 1 ? 'VENCE AMANHÃ' : `FALTAM ${d} DIAS`;
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '<span class="meta">Sem tag PLU</span>';
   const c = data.corridors.find((x) => x.id === p.corridorId);
-  return `<article class="pending-card"><div class="pending-card-main"><button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div class="pending-product-info"><div class="pending-title">${esc(p.name)}</div><div class="meta">EAN: ${esc(p.ean || 'Não informado')}</div><div class="meta">${tag} · ${esc(c?.name || 'Sem corredor')}</div><div class="meta">Validade: ${fmt(p.expiry)} · Qtd.: ${Number(p.quantity || 0)}</div></div></div><div class="pending-card-side"><span class="pending-deadline">${label}</span><button class="primary pique-btn" data-open-pique="${p.id}">📷 RETIRADA / PIQUE</button></div></article>`;
+  return `<article class="pending-card"><div class="pending-card-main"><button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div class="pending-product-info"><div class="pending-title">${esc(p.name)}</div><div class="meta">EAN: ${esc(p.ean || 'Não informado')}</div><div class="meta">${tag} · ${esc(c?.name || 'Sem corredor')}</div><div class="meta">Validade: ${fmt(p.expiry)} · Qtd.: ${Number(p.quantity || 0)}</div></div></div><div class="pending-card-side"><span class="pending-deadline">${label}</span><button class="primary pique-btn" data-open-pique="${p.id}">RETIRADA / PIQUE</button></div></article>`;
 }
 function pendingSection(title, list) {
   return `<section class="pending-group"><div class="pending-group-head"><h3>${title}</h3><span class="product-count">${list.length} produto${list.length === 1 ? '' : 's'}</span></div><div class="pending-list">${groupedPendingCards(list) || '<div class="empty">Nenhum produto nesta lista.</div>'}</div></section>`;
@@ -440,7 +506,7 @@ function pending() {
   const tomorrowList = list.filter((p) => daysTo(p.expiry) === 1);
   const nextDaysList = list.filter((p) => daysTo(p.expiry) >= 2 && daysTo(p.expiry) <= 10);
   const title = pendingFilter === 'fefo' ? 'PIQUE FEFO' : 'PIQUE';
-  return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Pendências</h2><p class="panel-sub">${title}: retire e confirme com uma foto os produtos que vencem nos próximos 10 dias.</p></div></div><div class="subnav"><button class="subnav-btn ${pendingFilter==='pique'?'active':''}" data-pending-filter="pique">🔴 PIQUE</button><button class="subnav-btn ${pendingFilter==='fefo'?'active':''}" data-pending-filter="fefo">🔵 PIQUE FEFO</button></div><div class="panel pending-panel">${pendingSection('Vence Hoje', todayList)}${pendingSection('Vence Amanhã', tomorrowList)}${pendingSection('Vence em 2–10 dias', nextDaysList)}</div>`;
+  return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Pendências</h2><p class="panel-sub">${title}: retire e confirme com uma foto os produtos que vencem nos próximos 10 dias.</p></div></div><div class="subnav"><button class="subnav-btn ${pendingFilter==='pique'?'active':''}" data-pending-filter="pique">${uiIcon('alert',15)} PIQUE</button><button class="subnav-btn ${pendingFilter==='fefo'?'active':''}" data-pending-filter="fefo">${uiIcon('box',15)} PIQUE FEFO</button></div><div class="panel pending-panel">${pendingSection('Vence Hoje', todayList)}${pendingSection('Vence Amanhã', tomorrowList)}${pendingSection('Vence em 2–10 dias', nextDaysList)}</div>`;
 }
 
 function showTeamToast(message, type = 'info') {
@@ -496,7 +562,7 @@ function notifyTeamEvent(payload) {
   const productCount = Number(row.product_count ?? data.products.filter((product) => String(product.batchId || '') === String(row.id)).length);
   const message = `Batida realizada · ${corridorLabel} · ${productCount} novo${productCount === 1 ? '' : 's'} produto${productCount === 1 ? '' : 's'}.`;
   teamNotificationCount += 1;
-  showTeamToast('🔔 ' + message, 'team');
+  showTeamToast('' + message, 'team');
   showRealtimeNotification('Vencimento PA · Batida finalizada', message, 'vpa-team-completed-' + row.id);
 }
 
@@ -756,7 +822,7 @@ function flushRebaixaInsertNotifications() {
   if (!count) return;
   const message = `Nova lista de rebaixa - ${count} novo${count === 1 ? '' : 's'} item${count === 1 ? '' : 'ns'}`;
   teamNotificationCount += 1;
-  showTeamToast('🔔 ' + message, 'team');
+  showTeamToast('' + message, 'team');
   showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-new-list');
 }
 
@@ -778,7 +844,7 @@ function scheduleRebaixaCompletionNotification() {
         rebaixaCompletionNoticeShown = true;
         const message = 'Rebaixa Automática Concluída';
         teamNotificationCount += 1;
-        showTeamToast('🔔 ' + message, 'team');
+        showTeamToast('' + message, 'team');
         showRealtimeNotification('Vencimento PA', message, 'vpa-rebaixa-completed');
       } else if (remaining.length > 0) {
         rebaixaCompletionNoticeShown = false;
@@ -845,9 +911,9 @@ async function mergeCloudBatidas(shouldRender = true) {
 
 function teamNotificationPermissionLabel() {
   if (!('Notification' in window)) return 'Este navegador não oferece notificações.';
-  if (Notification.permission === 'granted') return '🟢 Notificações autorizadas neste navegador.';
-  if (Notification.permission === 'denied') return '🔴 Notificações bloqueadas. Clique no ícone de cadeado/configurações do site e permita Notificações.';
-  return '🟡 Permissão de notificações ainda não definida neste navegador.';
+  if (Notification.permission === 'granted') return 'Notificações autorizadas neste navegador.';
+  if (Notification.permission === 'denied') return 'Notificações bloqueadas. Permita notificações nas configurações do site.';
+  return ' Permissão de notificações ainda não definida neste navegador.';
 }
 
 async function testAndroidNotification() {
@@ -879,7 +945,7 @@ async function testAndroidNotification() {
       timestamp: Date.now(),
       data: { url: './' }
     });
-    showTeamToast('✅ Notificação de teste enviada para a barra de notificações.', 'success');
+    showTeamToast('Notificação de teste enviada para a barra de notificações.', 'success');
   } catch (error) {
     console.warn('[VPA] Não foi possível mostrar a notificação de teste:', error);
     showTeamToast('Não foi possível mostrar a notificação. Teste pelo GitHub Pages com o PWA instalado.', 'warning');
@@ -889,12 +955,12 @@ async function testAndroidNotification() {
 async function requestTeamNotifications() {
   if (!('Notification' in window)) { showTeamToast('Este navegador não oferece notificações.', 'warning'); return; }
   if (Notification.permission === 'denied') {
-    showTeamToast('🔴 As notificações estão bloqueadas neste navegador. Abra as configurações do site e permita Notificações.', 'warning');
+    showTeamToast(' As notificações estão bloqueadas neste navegador. Abra as configurações do site e permita Notificações.', 'warning');
     render();
     return;
   }
   const permission = await Notification.requestPermission();
-  showTeamToast(permission === 'granted' ? '✅ Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas. Verifique a permissão do site no navegador.', permission === 'granted' ? 'success' : 'warning');
+  showTeamToast(permission === 'granted' ? 'Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas. Verifique a permissão do site no navegador.', permission === 'granted' ? 'success' : 'warning');
   render();
 }
 
@@ -924,14 +990,14 @@ async function autoActivateTeamAfterLogin(session) {
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      showTeamToast('✅ Notificações da equipe ativadas automaticamente neste navegador.', 'success');
+      showTeamToast('Notificações da equipe ativadas automaticamente neste navegador.', 'success');
     } else {
-      showTeamToast('🟡 Equipe online ativada. Para receber avisos, autorize as notificações em Ajustes.', 'warning');
+      showTeamToast(' Equipe online ativada. Para receber avisos, autorize as notificações em Ajustes.', 'warning');
     }
     render();
   } catch (error) {
     console.warn('[VPA] O navegador não permitiu solicitar notificações automaticamente:', error);
-    showTeamToast('🟡 Equipe online ativada. Clique em “Ativar notificações” em Ajustes para autorizar os avisos.', 'warning');
+    showTeamToast(' Equipe online ativada. Clique em “Ativar notificações” em Ajustes para autorizar os avisos.', 'warning');
     render();
   }
 }
@@ -983,7 +1049,7 @@ function notifyProfileEvent(payload) {
       applyProfileProtection(profile);
       render();
       if (profile.role === 'promotor') {
-        showTeamToast('🔒 Seu acesso foi alterado para Promotor PA.', 'warning');
+        showTeamToast(' Seu acesso foi alterado para Promotor PA.', 'warning');
       }
     }).catch((error) => console.warn('[VPA] Atualização do perfil em tempo real:', error));
   }
@@ -994,7 +1060,7 @@ function notifyPromotorProductEvent(payload) {
   const row = payload?.new || payload?.record || payload?.old || {};
   const name = row?.name || 'Produto do Promotor PA';
   mergeCloudPromotorProducts(true).catch((error) => console.warn('[VPA] Atualização Promotor PA:', error));
-  showTeamToast((eventType === 'DELETE' ? '🗑 Produto removido do Promotor PA: ' : '🔄 Produto atualizado no Promotor PA: ') + name, 'success');
+  showTeamToast((eventType === 'DELETE' ? 'Produto removido do Promotor PA: ' : ' Produto atualizado no Promotor PA: ') + name, 'success');
 }
 
 
@@ -1036,8 +1102,8 @@ async function loadAdminTeamMembers() {
       return `<div class="team-admin-row"><div><strong>${esc(member.full_name || member.email || 'Usuário')}</strong><small>${esc(member.email || '')} · <span class="presence-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}</small></div><select data-team-role="${esc(member.id)}"><option value="operador" ${role === 'operador' ? 'selected' : ''}>Operador</option><option value="pleno_1" ${role === 'pleno_1' ? 'selected' : ''}>Pleno 1</option><option value="pleno_2" ${role === 'pleno_2' ? 'selected' : ''}>Pleno 2</option><option value="chefe" ${role === 'chefe' ? 'selected' : ''}>Gerência</option><option value="promotor" ${role === 'promotor' ? 'selected' : ''}>Promotor</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`;
     }).join('') : '<div class="empty">Nenhum usuário encontrado.</div>';
     target.querySelectorAll('[data-team-role]').forEach((select) => select.addEventListener('change', async () => {
-      try { await window.VPASupabase.updateUserRole(select.dataset.teamRole, select.value); showTeamToast('✅ Categoria do usuário atualizada.', 'success'); }
-      catch (error) { showTeamToast('⚠️ Não foi possível alterar a categoria.', 'warning'); console.warn('[VPA] Alteração de categoria:', error); }
+      try { await window.VPASupabase.updateUserRole(select.dataset.teamRole, select.value); showTeamToast('Categoria do usuário atualizada.', 'success'); }
+      catch (error) { showTeamToast('Não foi possível alterar a categoria.', 'warning'); console.warn('[VPA] Alteração de categoria:', error); }
     }));
   } catch (error) { target.innerHTML = '<div class="empty">Não foi possível carregar os usuários. Execute a migração administrativa no Supabase.</div>'; console.warn('[VPA] Usuários:', error.message || error); }
 }
@@ -1077,7 +1143,7 @@ async function initTeamRealtime() {
       window.clearInterval(teamAdminRefreshTimer);
       teamAdminRefreshTimer = window.setInterval(() => loadAdminTeamMembers(), 30000);
     }
-    showTeamToast('🟢 Equipe online: batidas e corredores compartilhados ativados.', 'success');
+    showTeamToast(' Equipe online: batidas e corredores compartilhados ativados.', 'success');
    } catch (error) {
     console.warn('[VPA] Realtime da equipe não foi iniciado:', error.message || error);
     return null;
@@ -1101,7 +1167,7 @@ async function checkForAppUpdate() {
     const remoteVersion = String(remote.version || '').trim();
     if (!remoteVersion) throw new Error('Arquivo de versão inválido.');
     if (remoteVersion === APP_VERSION) {
-      if (status) status.textContent = `✅ Aplicativo atualizado (${APP_VERSION}).`;
+      if (status) status.textContent = `Aplicativo atualizado (${APP_VERSION}).`;
       return;
     }
     if (status) status.textContent = `⬆ Nova versão disponível: ${remoteVersion}. Preparando atualização...`;
@@ -1132,11 +1198,11 @@ async function checkForAppUpdate() {
 function settings() {
   const admin = isAdministrator();
   const personal = `<div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">↻ Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
   if (!admin) return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Seu perfil permite apenas ajustes pessoais e atualização do aplicativo.</p></div></div>${personal}`;
   return `<div class="section-head"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Controle geral do sistema, usuários, sincronização e preferências.</p></div></div>${personal}
   <div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração é aplicada no perfil do Supabase.</p><div id="adminTeamList" class="team-admin-list"><div class="empty">Carregando usuários...</div></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">🔔 Autorizar notificações</button><button class="secondary" id="testAndroidNotification">📱 Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? '🟢 Equipe conectada' : '🟡 Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">Autorizar notificações</button><button class="secondary" id="testAndroidNotification"> Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? ' Equipe conectada' : ' Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1149,10 +1215,10 @@ function floatingItems() {
     ['settings','⚙','Ajustes']
   ];
   const submenus = {
-    products: [['all','Todos'],['fefo','Produtos FEFO'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']],
+    products: [['all','Todos'],['fefo','Produtos FEFO'],['critical','Lista Crítica'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']],
     batches: [['current','Batida atual'],['history','Histórico']],
     expiries: [['today','Vence hoje'],['tomorrow','Vence amanhã'],['10','Vence em 2–10 dias'],['30','Vence em 11–30 dias'],['31','Vence em 31+ dias']],
-    pending: [['pique','🔴 PIQUE'],['fefo','🔵 PIQUE FEFO']]
+    pending: [['pique',' PIQUE'],['fefo',' PIQUE FEFO']]
   };
   const mainMarkup = main.map(([key,icon,label]) => `<button class="nav-main-item${view === key ? ' active' : ''}" data-view="${key}"><span>${icon}</span><strong>${label}</strong></button>`).join('');
   const submenuMarkup = (submenus[view] || []).length
@@ -1173,7 +1239,7 @@ function rebaixaPage() {
   const q = searchValue.trim().toLowerCase();
   const items = data.rebaixaItems.slice().sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31'))).filter((item) => !q || `${item.loja} ${item.plu} ${item.name} ${item.quantity} ${item.expiry} ${item.value}`.toLowerCase().includes(q));
   const empty = !data.rebaixaItems.length;
-  return `<div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">📊 Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div><div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div>`;
+  return `<div class="rebaixa-toolbar"><button class="primary" id="openRebaixaImport">Importar lista Excel</button><button class="secondary" id="exportRebaixaExcel" ${data.rebaixaItems.length ? '' : 'disabled'}>⇩ Exportar Excel</button></div><div class="products-toolbar"><div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="rebaixaSearch" placeholder="Buscar loja, PLU ou descrição..." value="${esc(searchValue)}"></div><span class="product-count">${items.length} item${items.length === 1 ? '' : 'ns'}</span></div><div class="rebaixa-list">${items.length ? items.map((item) => `<div class="rebaixa-row"><div class="rebaixa-main"><div class="product-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">Loja: ${esc(item.loja || '—')} · PLU: ${esc(item.plu || '—')}</div><div class="meta">Estoque: ${esc(item.quantity || '—')} · Valor: ${esc(formatRebaixaValue(item.value))}</div></div><div class="rebaixa-date"><strong>Vencimento: ${esc(fmt(item.expiry))}</strong><button class="rebaixa-done-btn" data-rebaixa-done="${esc(item.id)}">Preço alterado ✓</button></div></div>`).join('') : `<div class="rebaixa-empty"><strong>${empty ? 'Tudo em dia' : 'Nenhum resultado encontrado'}</strong><span>${empty ? 'Aguardando nova lista de Rebaixas' : 'Tente outra busca ou importe uma nova lista.'}</span></div>`}</div>`;
 }
 function reports() {
   const monthKey = today().slice(0, 7);
@@ -1342,7 +1408,7 @@ async function finishBatch() {
         product.syncPending = false;
       });
     } catch (error) {
-      showTeamToast('⚠️ A batida não foi finalizada: os itens temporários não foram publicados.', 'warning');
+      showTeamToast('A batida não foi finalizada: os itens temporários não foram publicados.', 'warning');
       console.error('[VPA] Falha na finalização transacional da batida:', error);
       return;
     }
@@ -1484,7 +1550,7 @@ async function deleteSelectedProducts() {
     selectedProducts.clear();
     await save();
     render();
-    showTeamToast('✅ Produto(s) removido(s) do banco compartilhado e deste dispositivo.', 'success');
+    showTeamToast('Produto(s) removido(s) do banco compartilhado e deste dispositivo.', 'success');
   } catch (error) {
     console.error('[VPA] Falha ao excluir produtos compartilhados:', error);
     showTeamToast('❌ Não foi possível excluir no banco compartilhado: ' + (error.message || 'erro desconhecido'), 'error');
@@ -1546,17 +1612,21 @@ async function runFefoOcr() {
 async function importFefoItems() {
   if (!fefoOcrItems.length) { alert('Leia uma lista e confira pelo menos um item antes de confirmar.'); return; }
   const corridorId = data.corridors[0]?.id || '';
-  const imported = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const candidates = fefoOcrItems.filter(it => it.name && it.expiry).map((it) => ({ id: uid(), name: it.name, ean: it.ean || '', plu: '', storeNumber: '', corridorId, expiry: it.expiry, quantity: 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'lista-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const imported = [];
+  const seen = new Set();
+  candidates.forEach((product) => { const key = productDuplicateKey(product); if (!key || seen.has(key) || findExistingProduct(product)) return; seen.add(key); imported.push(product); });
+  if (!imported.length) { showTeamToast('Nenhum produto novo foi adicionado. Os itens duplicados foram ignorados.', 'warning'); $('fefoScannerDialog').close(); $('productDialog').close(); render(); return; }
   imported.forEach((product) => data.products.push(product));
   await save();
   const corridor = data.corridors.find((c) => c.id === corridorId);
   try {
     const result = await window.VPASupabase?.syncProducts?.(imported.map((p) => ({ ...p, corridorNumber: corridor?.number })));
-    if (result && result.failed) showTeamToast(`⚠️ FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
-    else if (result?.synced) { imported.forEach((product) => { product.syncPending = false; }); await save(); showTeamToast(`☁️ ${result.synced} item(ns) FEFO enviado(s) ao banco compartilhado.`, 'success'); }
+    if (result && result.failed) showTeamToast(`FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
+    else if (result?.synced) { imported.forEach((product) => { product.syncPending = false; }); await save(); showTeamToast(`${result.synced} item(ns) FEFO enviado(s) ao banco compartilhado.`, 'success'); }
   } catch (error) {
     console.warn('[VPA] Sincronização automática do FEFO falhou:', error.message || error);
-    showTeamToast('⚠️ FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+    showTeamToast('FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
   $('fefoScannerDialog').close(); $('productDialog').close(); render();
 }
@@ -1586,8 +1656,8 @@ function renderExcelFefoItems() {
   const valid = excelFefoItems.filter(x => x.selected);
   $('excelFefoResults').innerHTML = excelFefoItems.length
     ? `<div class="fefo-ocr-note">${excelFefoItems.length} produto(s) encontrado(s). Confira os dados e desmarque o que não deseja importar.</div>
-      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU</span><span>Produto</span><span>Estoque</span><span>Vencimento</span></div>
-      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu)}</span><span>${esc(it.name)}</span><span>${esc(it.quantity)}</span><span>${esc(it.expiry)}</span></label>`).join('')}</div>`
+      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>EAN</span><span>PLU</span><span>Produto</span><span>Estoque</span><span>Vencimento</span></div>
+      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.ean)}</span><span>${esc(it.plu)}</span><span>${esc(it.name)}</span><span>${esc(it.quantity)}</span><span>${esc(it.expiry)}</span></label>`).join('')}</div>`
     : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmExcelFefo').disabled = !valid.length;
   document.querySelectorAll('[data-excel-index]').forEach(el => el.addEventListener('change', () => {
@@ -1611,9 +1681,10 @@ async function readExcelFefoFile(event) {
       const get = (name) => row[keys.find(k => String(k).trim().toUpperCase() === name)] ?? '';
       const name = String(get('DESCRICAO') || get('DESCRIÇÃO') || get('PRODUTO') || '').trim();
       const plu = String(get('PLU') || '').trim();
+      const ean = String(get('EAN') || get('CODIGO') || get('CÓDIGO') || get('CODIGO DE BARRAS') || '').trim();
       const quantity = String(get('ESTOQUE') || get('QUANTIDADE') || '1').trim();
       const expiry = normalizeExcelDate(get('DATA VENCIMENTO') || get('VENCIMENTO') || get('VALIDADE'));
-      return { id:uid(), plu, name, quantity, expiry, selected:Boolean(name && expiry), row:index+2 };
+      return { id:uid(), ean, plu, name, quantity, expiry, selected:Boolean(name && expiry), row:index+2 };
     }).filter(x => x.name && x.expiry);
     renderExcelFefoItems();
     $('excelFefoStatus').textContent = `${excelFefoItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
@@ -1629,7 +1700,11 @@ async function confirmExcelFefoImport() {
   if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
   const corridorId = data.corridors[0]?.id || '';
   const corridor = data.corridors.find(c => c.id === corridorId);
-  const imported = selected.map(it => ({ id:uid(), name:it.name, ean:'', plu:it.plu, storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity)||1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'planilha-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:it.ean || '', plu:it.plu, storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity)||1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'planilha-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const imported = [];
+  const seen = new Set();
+  candidates.forEach((product) => { const key = productDuplicateKey(product); if (!key || seen.has(key) || findExistingProduct(product)) return; seen.add(key); imported.push(product); });
+  if (!imported.length) { $('excelFefoStatus').textContent = 'Nenhum produto novo foi importado. Os duplicados foram ignorados.'; showTeamToast('Nenhum produto novo foi importado. Os duplicados foram ignorados.', 'warning'); $('excelFefoDialog').close(); render(); return; }
   imported.forEach(p => data.products.push(p));
   await save();
   try {
@@ -1643,18 +1718,74 @@ async function confirmExcelFefoImport() {
     if (result?.failed) {
       const firstErrors = (result.errors || []).slice(0, 3).map(e => `${e.name}: ${e.message}`).join(' | ');
       $('excelFefoStatus').textContent = `Importação concluída: ${result.synced || 0} enviado(s), ${result.failed} com falha.`;
-      showTeamToast(`⚠️ Importação FEFO: ${result.synced || 0} enviados e ${result.failed} com falha.${firstErrors ? ` ${firstErrors}` : ''}`, 'warning');
+      showTeamToast(`Importação FEFO: ${result.synced || 0} enviados e ${result.failed} com falha.${firstErrors ? ` ${firstErrors}` : ''}`, 'warning');
     } else if (result?.synced) {
       $('excelFefoStatus').textContent = `Importação concluída: ${result.synced} de ${result.total} produto(s) enviados ao banco compartilhado.`;
-      showTeamToast(`☁️ ${result.synced} produto(s) FEFO importado(s) para o banco compartilhado.`, 'success');
-    } else showTeamToast('✅ Produtos importados localmente.', 'success');
+      showTeamToast(`${result.synced} produto(s) FEFO importado(s) para o banco compartilhado.`, 'success');
+    } else showTeamToast('Produtos importados localmente.', 'success');
   } catch (error) {
     console.warn('[VPA] Sincronização da planilha falhou:', error);
     $('excelFefoStatus').textContent = 'Falha na sincronização: os produtos permanecem salvos localmente.';
-    showTeamToast('⚠️ Produtos salvos localmente, mas não enviados ao Supabase.', 'warning');
+    showTeamToast('Produtos salvos localmente, mas não enviados ao Supabase.', 'warning');
   }
   $('excelFefoDialog').close();
   render();
+}
+
+let criticalExcelItems = [];
+function openCriticalImport() {
+  criticalExcelItems = [];
+  $('criticalExcelInput').value = '';
+  $('criticalExcelStatus').textContent = '';
+  $('criticalExcelResults').innerHTML = '<div class="empty">Selecione uma planilha para visualizar os produtos.</div>';
+  $('confirmCriticalImport').disabled = true;
+  $('criticalImportDialog').showModal();
+}
+function renderCriticalExcelItems() {
+  const selected = criticalExcelItems.filter((item) => item.selected);
+  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>EAN</span><span>Descrição</span><span>Estoque</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.ean)}</span><span>${esc(item.name)}</span><span>${esc(item.quantity)}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
+  $('confirmCriticalImport').disabled = !selected.length;
+  document.querySelectorAll('[data-critical-excel-index]').forEach((el) => el.addEventListener('change', () => { criticalExcelItems[Number(el.dataset.criticalExcelIndex)].selected = el.checked; $('confirmCriticalImport').disabled = !criticalExcelItems.some((x) => x.selected); }));
+}
+async function readCriticalExcelFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!window.XLSX) { $('criticalExcelStatus').textContent = 'Leitor Excel não carregado. Verifique a internet.'; return; }
+  $('criticalExcelStatus').textContent = 'Lendo planilha...'; $('confirmCriticalImport').disabled = true;
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type:'array', cellDates:true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval:'', raw:true });
+    criticalExcelItems = rows.map((row,index) => {
+      const keys = Object.keys(row);
+      const get = (...names) => { const found = keys.find(k => names.includes(String(k).trim().toUpperCase())); return found ? row[found] : ''; };
+      const ean = String(get('EAN','CÓDIGO','CODIGO','CÓDIGO DE BARRAS','CODIGO DE BARRAS','EAN/GTIN') || '').trim();
+      const name = String(get('DESCRIÇÃO','DESCRICAO','PRODUTO','NOME','NOME DO PRODUTO') || '').trim();
+      const quantity = Number(String(get('ESTOQUE','QUANTIDADE','QTD','QTD ESTOQUE','SALDO') || '0').replace(',','.')) || 0;
+      return { id:uid(), ean, name, quantity, selected:Boolean(name && (ean || name)), row:index+2 };
+    }).filter(item => item.name);
+    renderCriticalExcelItems();
+    $('criticalExcelStatus').textContent = `${criticalExcelItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
+  } catch (error) { console.error('[VPA] Falha ao ler Lista Crítica:', error); $('criticalExcelStatus').textContent = 'Não foi possível ler a planilha. Confira os cabeçalhos.'; criticalExcelItems=[]; renderCriticalExcelItems(); }
+}
+async function confirmCriticalExcelImport() {
+  const selected = criticalExcelItems.filter(item => item.selected && item.name);
+  if (!selected.length) return;
+  let added = 0, updated = 0, skipped = 0;
+  const batchSeen = new Set();
+  selected.forEach((item) => {
+    const key = normalizeCriticalKey(item);
+    if (!key || batchSeen.has(key)) { skipped++; return; }
+    batchSeen.add(key);
+    const existing = findCriticalItem(item);
+    if (existing) { existing.ean = item.ean || existing.ean; existing.name = item.name || existing.name; existing.quantity = Number(item.quantity || 0); updated++; }
+    else { data.criticalItems.push({ id:uid(), ean:item.ean, name:item.name, quantity:Number(item.quantity || 0), updatedAt:new Date().toISOString() }); added++; }
+  });
+  await save();
+  $('criticalExcelStatus').textContent = `Atualização concluída: ${added} novo(s), ${updated} atualizado(s), ${skipped} duplicado(s) ignorado(s).`;
+  showTeamToast(`Lista Crítica atualizada: ${added} novo(s) e ${updated} atualizado(s).`, 'success');
+  $('criticalImportDialog').close(); render();
 }
 
 let rebaixaExcelItems = [];
@@ -1729,11 +1860,11 @@ async function confirmRebaixaExcelImport() {
     data.rebaixaItems.sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
     await save();
     $('rebaixaExcelDialog').close();
-    showTeamToast(`✅ ${uniqueImported.length} item(ns) confirmados no banco compartilhado de Rebaixa Automática.`, 'success');
+    showTeamToast(`${uniqueImported.length} item(ns) confirmados no banco compartilhado de Rebaixa Automática.`, 'success');
     render();
   } catch (error) {
     console.error('[VPA] Falha ao compartilhar lista de rebaixas:', error);
-    showTeamToast('⚠️ Não foi possível compartilhar a lista. Verifique a tabela rebaixa_items no Supabase.', 'warning');
+    showTeamToast('Não foi possível compartilhar a lista. Verifique a tabela rebaixa_items no Supabase.', 'warning');
   }
 }
 function exportRebaixaExcel() {
@@ -1758,12 +1889,12 @@ async function markRebaixaDone(id) {
     await save();
     if (!data.rebaixaItems.length) {
       rebaixaCompletionNoticeShown = true;
-      showTeamToast('📣 Rebaixa Automática Concluída.', 'success');
+      showTeamToast('Rebaixa Automática Concluída.', 'success');
     }
     render();
   } catch (error) {
     console.error('[VPA] Falha ao concluir rebaixa:', error);
-    showTeamToast('⚠️ Não foi possível atualizar a rebaixa compartilhada.', 'warning');
+    showTeamToast('Não foi possível atualizar a rebaixa compartilhada.', 'warning');
   }
 }
 
@@ -1806,7 +1937,7 @@ async function confirmPique() {
     } catch (error) {
       p.piqueConcluido = false;
       p.status = 'corredor';
-      showTeamToast('⚠️ Retirada registrada localmente, mas não foi possível excluir o produto do Promotor PA.', 'warning');
+      showTeamToast('Retirada registrada localmente, mas não foi possível excluir o produto do Promotor PA.', 'warning');
       console.warn('[VPA] Falha ao excluir produto do Promotor PA:', error);
     }
   }
@@ -1946,7 +2077,7 @@ function bindProfilePhoto() {
         const value = String(reader.result || '');
         try { localStorage.setItem('vpa-profile-avatar', value); } catch (error) { console.warn('[VPA] Não foi possível salvar a foto:', error); }
         applyProfileAvatar(value);
-        showTeamToast('✅ Foto do perfil atualizada neste aparelho.', 'success');
+        showTeamToast('Foto do perfil atualizada neste aparelho.', 'success');
       };
       reader.readAsDataURL(file);
     });
@@ -1965,6 +2096,10 @@ function bind() {
   $('cancelExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
   $('excelFefoInput')?.addEventListener('change', readExcelFefoFile);
   $('confirmExcelFefo')?.addEventListener('click', confirmExcelFefoImport);
+  $('closeCriticalImport')?.addEventListener('click', () => $('criticalImportDialog').close());
+  $('cancelCriticalImport')?.addEventListener('click', () => $('criticalImportDialog').close());
+  $('criticalExcelInput')?.addEventListener('change', readCriticalExcelFile);
+  $('confirmCriticalImport')?.addEventListener('click', confirmCriticalExcelImport);
   $('openRebaixaImport')?.addEventListener('click', openRebaixaImport);
   $('exportRebaixaExcel')?.addEventListener('click', exportRebaixaExcel);
   $('closeRebaixaExcel')?.addEventListener('click', () => $('rebaixaExcelDialog').close());
@@ -2002,7 +2137,7 @@ function bind() {
   if (isAdministrator()) loadAdminTeamMembers();
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
-  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('↻ Batidas da equipe atualizadas.', 'success'); });
+  $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
   document.querySelectorAll('[data-quick-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.quickView; render(); }));
@@ -2010,7 +2145,12 @@ function bind() {
     const filter = b.dataset.subnav;
     if (filter === 'critical' || filter === 'today') filterProducts($('search')?.value || '', filter);
   }));
-  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); render(); }));
+  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); if (productFilter === 'critical') criticalPage = 1; render(); }));
+  $('openCriticalImport')?.addEventListener('click', openCriticalImport);
+  $('criticalSearch')?.addEventListener('input', (e) => { criticalSearch = e.target.value; criticalPage = 1; localStorage.setItem('vpa-critical-search', criticalSearch); render(); });
+  $('criticalPrev')?.addEventListener('click', () => { criticalPage = Math.max(1, criticalPage - 1); localStorage.setItem('vpa-critical-page', criticalPage); render(); });
+  $('criticalNext')?.addEventListener('click', () => { criticalPage += 1; localStorage.setItem('vpa-critical-page', criticalPage); render(); });
+  document.querySelectorAll('[data-critical-delete]').forEach((b) => b.addEventListener('click', async () => { data.criticalItems = data.criticalItems.filter((item) => String(item.id) !== String(b.dataset.criticalDelete)); await save(); render(); }));
   $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); render(); });
   $('expiryMonthFilter')?.addEventListener('change', (e) => { expiryMonthFilter = e.target.value; localStorage.setItem('vpa-expiry-month-filter', expiryMonthFilter); render(); });
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
@@ -2049,7 +2189,7 @@ function bind() {
   $('closeCorridorsDialogBottom')?.addEventListener('click', () => $('corridorsDialog').close());
   $('closeCorridorManagerDialog')?.addEventListener('click', () => $('corridorManagerDialog').close());
   $('cancelCorridorManager')?.addEventListener('click', () => $('corridorManagerDialog').close());
-  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const changes = []; data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) { c.name = name.value.trim() || `Corredor ${c.number}`; changes.push(c); } }); await save(); try { for (const c of changes) { if (c.cloudId && window.VPASupabase?.updateCorridorName) await window.VPASupabase.updateCorridorName(c.cloudId, c.name); } showTeamToast('☁️ Corredores atualizados para toda a equipe.', 'success'); } catch (error) { showTeamToast('⚠️ Os nomes foram salvos localmente, mas não foram enviados à nuvem.', 'warning'); console.warn('[VPA] Atualização de corredores:', error); } $('corridorManagerDialog').close(); render(); });
+  $('corridorManagerForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const changes = []; data.corridors.forEach((c) => { const name = document.querySelector(`[data-corridor-name="${c.id}"]`); if (name) { c.name = name.value.trim() || `Corredor ${c.number}`; changes.push(c); } }); await save(); try { for (const c of changes) { if (c.cloudId && window.VPASupabase?.updateCorridorName) await window.VPASupabase.updateCorridorName(c.cloudId, c.name); } showTeamToast('Corredores atualizados para toda a equipe.', 'success'); } catch (error) { showTeamToast('Os nomes foram salvos localmente, mas não foram enviados à nuvem.', 'warning'); console.warn('[VPA] Atualização de corredores:', error); } $('corridorManagerDialog').close(); render(); });
   $('allCorridors')?.addEventListener('click', showCorridors);
   $('reportsShortcut')?.addEventListener('click', () => { view = 'reports'; render(); });
   $('reportsBtn')?.addEventListener('click', () => { view = 'reports'; render(); });
@@ -2113,15 +2253,20 @@ $('productForm').addEventListener('submit', async (e) => {
     ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
     : null;
   const isNew = !existing;
+  const selectedType = document.querySelector('input[name=productType]:checked')?.value || 'general';
+  if (isNew) {
+    const duplicate = findExistingProduct({ ean: $('ean').value.trim(), name: $('name').value.trim() });
+    if (duplicate) { showTeamToast('Este produto já existe na lista. O cadastro duplicado foi bloqueado.', 'warning'); return; }
+  }
   const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
   let photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
   if (pendingProductPhotoFile && window.VPASupabase?.uploadProductPhoto) {
     try {
-      showTeamToast('☁️ Enviando foto para a nuvem...', 'info');
+      showTeamToast('Enviando foto para a nuvem...', 'info');
       photoCloudUrl = await window.VPASupabase.uploadProductPhoto(pendingProductPhotoFile, id);
     } catch (error) {
       console.error('[VPA] Upload da foto do produto falhou:', error);
-      showTeamToast('⚠️ A foto não foi enviada para a nuvem. O produto não será publicado com foto compartilhada.', 'warning');
+      showTeamToast('A foto não foi enviada para a nuvem. O produto não será publicado com foto compartilhada.', 'warning');
       return;
     }
   }
@@ -2136,7 +2281,7 @@ $('productForm').addEventListener('submit', async (e) => {
     createdAt: existing?.createdAt || new Date().toISOString(),
     batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
     origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
-    categoriaCadastro: document.querySelector('input[name=productType]:checked')?.value || 'general',
+    categoriaCadastro: selectedType,
     photo: photoCloudUrl || $('photoData').value || existing?.photo || '',
     photoCloudUrl,
     tag: existing?.tag || '',
@@ -2174,12 +2319,12 @@ $('productForm').addEventListener('submit', async (e) => {
       : Boolean(result && !result.failed && result.synced === 1);
     if (!successful) {
       const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
-      showTeamToast('⚠️ Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
+      showTeamToast('Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
     } else {
       product.syncPending = false;
       await save();
       console.info('[VPA] Registro confirmado no Supabase:', product.id);
-      showTeamToast(product.isTemporaryBatchItem ? '☁️ Produto mantido na preparação da batida.' : '☁️ Produto confirmado no banco compartilhado.', 'success');
+      showTeamToast(product.isTemporaryBatchItem ? 'Produto mantido na preparação da batida.' : 'Produto confirmado no banco compartilhado.', 'success');
     }
   } catch (error) {
     // Nunca perder o estado pendente quando a nuvem falhar.
@@ -2188,7 +2333,7 @@ $('productForm').addEventListener('submit', async (e) => {
     render();
     const detail = error?.message ? ` Detalhe: ${error.message}` : '';
     console.error('[VPA] Sincronização automática do produto falhou:', error);
-    showTeamToast('⚠️ Produto salvo localmente, mas não foi enviado ao banco compartilhado.' + detail, 'warning');
+    showTeamToast('Produto salvo localmente, mas não foi enviado ao banco compartilhado.' + detail, 'warning');
   }
   pendingProductPhotoFile = null;
   $('productDialog').close();
