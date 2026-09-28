@@ -1,6 +1,1 @@
-{
-  "version": "V48-lista-critica",
-  "base": "V47-ordem-validade-crescente",
-  "description": "Lista Crítica via Excel com paginação de 20 itens, atualização sem duplicação, proteção contra duplicação em FEFO e catálogo geral e revisão de ícones sem emojis.",
-  "date": "2026-09-28"
-}
+{"version":"V49","name":"Vencimento PA — Lista Crítica, paginação e navegação","build":"2026-09-28"}

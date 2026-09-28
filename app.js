@@ -1,4 +1,4 @@
-const APP_VERSION = 'V48';
+const APP_VERSION = 'V49';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -10,6 +10,7 @@ let productFilter = localStorage.getItem('vpa-product-filter') || 'all';
 let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') || 'all';
 let expiryMonthFilter = localStorage.getItem('vpa-expiry-month-filter') || 'all';
 let criticalPage = Number(localStorage.getItem('vpa-critical-page') || 1) || 1;
+let productPage = Number(localStorage.getItem('vpa-product-page') || 1) || 1;
 let criticalSearch = localStorage.getItem('vpa-critical-search') || '';
 const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
@@ -41,6 +42,10 @@ function uiIcon(name, size = 18) {
 }
 function normalizeProductKey(value) {
   return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'');
+}
+function uniqueProductsByKey(list) {
+  const seen = new Set();
+  return list.filter((product) => { const key = productDuplicateKey(product); if (!key) return true; if (seen.has(key)) return false; seen.add(key); return true; });
 }
 function productDuplicateKey(product) {
   const ean = normalizeProductKey(product?.ean);
@@ -121,7 +126,7 @@ function seed() {
   data.rebaixaItems ||= [];
   data.criticalItems ||= [];
   data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
-  data.criticalItems = data.criticalItems.map((item) => ({ ...item, id: item.id || uid(), ean: String(item.ean || '').trim(), name: String(item.name || '').trim(), quantity: Number(item.quantity || 0) }));
+  data.criticalItems = data.criticalItems.map((item) => ({ ...item, id: item.id || uid(), ean: String(item.ean || '').trim(), name: String(item.name || '').trim(), quantity: Number(item.quantity || 0), expiry: normalizeExcelDate(item.expiry || item.validade || item.dataVencimento || '') }));
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
@@ -370,27 +375,26 @@ function dashboard() {
 }
 function criticalListPage() {
   const q = String(criticalSearch || '').trim().toLowerCase();
-  let list = data.criticalItems.slice().sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
-  if (q) list = list.filter((item) => `${item.name || ''} ${item.ean || ''}`.toLowerCase().includes(q));
+  let list = data.criticalItems.slice().sort((a,b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')) || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+  if (q) list = list.filter((item) => `${item.name || ''} ${item.ean || ''} ${item.expiry || ''}`.toLowerCase().includes(q));
   const totalPages = Math.max(1, Math.ceil(list.length / 20));
   criticalPage = Math.min(Math.max(1, criticalPage), totalPages);
   const start = (criticalPage - 1) * 20;
   const pageItems = list.slice(start, start + 20);
-  const rows = pageItems.map((item) => `<div class="critical-row"><div class="critical-index">${start + pageItems.indexOf(item) + 1}</div><div class="critical-main"><div class="critical-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">EAN: ${esc(item.ean || 'Não informado')}</div></div><div class="critical-stock"><span>Estoque</span><strong>${Number(item.quantity || 0)}</strong></div><button type="button" class="critical-delete" data-critical-delete="${esc(item.id)}" aria-label="Remover ${esc(item.name)}" title="Remover produto">${uiIcon('trash',16)}</button></div>`).join('');
-  const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="criticalPrev" ${criticalPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${criticalPage}</strong> de ${totalPages}</span><button type="button" class="secondary" id="criticalNext" ${criticalPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
-  return `<div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 20 itens.</p></div></div>
+  const rows = pageItems.map((item, idx) => `<div class="critical-row"><div class="critical-index">${start + idx + 1}</div><div class="critical-main"><div class="critical-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">EAN: ${esc(item.ean || 'Não informado')} · Validade: ${item.expiry ? esc(fmt(item.expiry)) : 'Não informada'}</div></div><div class="critical-stock"><span>Estoque</span><strong>${Number(item.quantity || 0)}</strong></div><button type="button" class="critical-delete" data-critical-delete="${esc(item.id)}" aria-label="Remover ${esc(item.name)}" title="Remover produto">${uiIcon('trash',16)}</button></div>`).join('');
+  const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="criticalPrev" ${criticalPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${criticalPage}</strong> de ${totalPages} · ${list.length} produtos</span><button type="button" class="secondary" id="criticalNext" ${criticalPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
+  return `<div class="products-toolbar critical-toolbar"><div class="products-search-wrap"><span>${uiIcon('search',16)}</span><input class="search compact-search" id="criticalSearch" placeholder="Buscar por EAN ou descrição..." value="${esc(criticalSearch)}"></div><button type="button" class="primary" id="openCriticalImport">${uiIcon('upload',16)} Importar Excel</button></div>
   <div class="products-overview"><div class="product-stat-card"><div class="product-stat-icon red">${uiIcon('alert',18)}</div><div><strong>${list.length}</strong><span>Produtos críticos</span></div></div><div class="product-stat-card"><div class="product-stat-icon blue">${uiIcon('file',18)}</div><div><strong>20</strong><span>Itens por página</span></div></div></div>
-  <div class="products-filter-panel critical-panel"><div class="critical-toolbar"><div class="products-search-wrap"><span>${uiIcon('search',16)}</span><input class="search compact-search" id="criticalSearch" placeholder="Buscar por EAN ou descrição..." value="${esc(criticalSearch)}"></div><button type="button" class="primary" id="openCriticalImport">${uiIcon('upload',16)} Importar Excel</button></div>
-  <div class="critical-list-head"><span>#</span><span>Produto</span><span>Quantidade</span><span></span></div><div class="critical-list">${rows || '<div class="empty">Nenhum produto na Lista Crítica. Importe uma planilha Excel para começar.</div>'}</div>${pagination}</div>`;
+  <div class="critical-list-head"><span>#</span><span>Produto / validade</span><span>Quantidade</span><span></span></div><div class="critical-list">${rows || '<div class="empty">Nenhum produto na Lista Crítica. Importe uma planilha Excel para começar.</div>'}</div>${pagination}`;
 }
 function products() {
   const filters = [['all','Todos'],['fefo','Produtos FEFO'],['critical','Lista Crítica'],['promotor','Produtos Promotores'],['rebaixa','Rebaixa Automática']];
   const filter = productFilter;
   const allVisible = visibleProducts();
-  if (filter === 'critical') return `<section class="products-page">${criticalListPage()}</section>`;
   // A lista geral exclui FEFO e Promotores; cada categoria aparece somente em sua própria lista.
   let list = allVisible.filter((p) => filter === 'fefo' ? Boolean(p.fefo) : filter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
   list = list.filter(matchesExpiryMonth);
+  list = uniqueProductsByKey(list);
   const searchValue = localStorage.getItem('vpa-product-search') || '';
   const promotorCompanies = Array.from(new Set(allVisible.filter((p) => p.promotor && p.company).map((p) => String(p.company).trim()).filter(Boolean))).sort((a,b) => a.localeCompare(b, 'pt-BR'));
   if (filter === 'promotor' && promotorCompanyFilter !== 'all') list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
@@ -399,19 +403,26 @@ function products() {
     list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
   }
   const rebaixaMode = filter === 'rebaixa';
+  const criticalMode = filter === 'critical';
+  if (criticalMode) return `<section class="products-page"><div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 20 itens.</p></div></div><div class="products-filter-panel critical-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>${criticalListPage()}</div></section>`;
   const rebaixaCount = data.rebaixaItems.length;
   const statsList = rebaixaMode ? data.rebaixaItems : list;
   const critical = statsList.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido' && p.status !== 'completed').length;
   const attention = statsList.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido' && p.status !== 'completed').length;
   const resolved = rebaixaMode ? 0 : list.filter((p) => p.status === 'resolvido').length;
   const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
+  const totalProductPages = Math.max(1, Math.ceil(list.length / 20));
+  productPage = Math.min(Math.max(1, productPage), totalProductPages);
+  const productStart = (productPage - 1) * 20;
+  const pageList = list.slice(productStart, productStart + 20);
+  const productPagination = totalProductPages > 1 ? `<div class="critical-pagination product-pagination"><button type="button" class="secondary" id="productPrev" ${productPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${productPage}</strong> de ${totalProductPages} · ${list.length} produtos</span><button type="button" class="secondary" id="productNext" ${productPage >= totalProductPages ? 'disabled' : ''}>Próxima</button></div>` : '';
   const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div><label class="expiry-month-filter-label" for="expiryMonthFilter">Validade<select id="expiryMonthFilter" class="expiry-month-filter"><option value="all" ${expiryMonthFilter === 'all' ? 'selected' : ''}>Todos os meses</option>${expiryMonths.map((month,index) => `<option value="${index+1}" ${String(expiryMonthFilter) === String(index+1) ? 'selected' : ''}>${month}</option>`).join('')}</select></label>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
-      <div class="list products-list" id="productList">${groupedProductRows(list,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>
+      <div class="list products-list" id="productList">${groupedProductRows(pageList,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>${productPagination}
       <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
         <button type="button" class="bulk-fab" id="bulkFab" aria-expanded="false" aria-controls="bulkActionsMenu" title="Ações em massa">${uiIcon('filter',19)}</button>
         <div class="bulk-actions-menu" id="bulkActionsMenu" hidden>
@@ -1743,7 +1754,7 @@ function openCriticalImport() {
 }
 function renderCriticalExcelItems() {
   const selected = criticalExcelItems.filter((item) => item.selected);
-  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>EAN</span><span>Descrição</span><span>Estoque</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.ean)}</span><span>${esc(item.name)}</span><span>${esc(item.quantity)}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
+  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>EAN</span><span>Descrição</span><span>Estoque</span><span>Validade</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.ean)}</span><span>${esc(item.name)}</span><span>${esc(item.quantity)}</span><span>${esc(item.expiry ? fmt(item.expiry) : '—')}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmCriticalImport').disabled = !selected.length;
   document.querySelectorAll('[data-critical-excel-index]').forEach((el) => el.addEventListener('change', () => { criticalExcelItems[Number(el.dataset.criticalExcelIndex)].selected = el.checked; $('confirmCriticalImport').disabled = !criticalExcelItems.some((x) => x.selected); }));
 }
@@ -1763,7 +1774,8 @@ async function readCriticalExcelFile(event) {
       const ean = String(get('EAN','CÓDIGO','CODIGO','CÓDIGO DE BARRAS','CODIGO DE BARRAS','EAN/GTIN') || '').trim();
       const name = String(get('DESCRIÇÃO','DESCRICAO','PRODUTO','NOME','NOME DO PRODUTO') || '').trim();
       const quantity = Number(String(get('ESTOQUE','QUANTIDADE','QTD','QTD ESTOQUE','SALDO') || '0').replace(',','.')) || 0;
-      return { id:uid(), ean, name, quantity, selected:Boolean(name && (ean || name)), row:index+2 };
+      const expiry = normalizeExcelDate(get('DATA VENCIMENTO','DATA DE VENCIMENTO','VENCIMENTO','VALIDADE','DATA VALIDADE','DATA DE VALIDADE','DATA CRITICA','DATA CRÍTICA') || '');
+      return { id:uid(), ean, name, quantity, expiry, selected:Boolean(name && (ean || name)), row:index+2 };
     }).filter(item => item.name);
     renderCriticalExcelItems();
     $('criticalExcelStatus').textContent = `${criticalExcelItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
@@ -1779,8 +1791,8 @@ async function confirmCriticalExcelImport() {
     if (!key || batchSeen.has(key)) { skipped++; return; }
     batchSeen.add(key);
     const existing = findCriticalItem(item);
-    if (existing) { existing.ean = item.ean || existing.ean; existing.name = item.name || existing.name; existing.quantity = Number(item.quantity || 0); updated++; }
-    else { data.criticalItems.push({ id:uid(), ean:item.ean, name:item.name, quantity:Number(item.quantity || 0), updatedAt:new Date().toISOString() }); added++; }
+    if (existing) { existing.ean = item.ean || existing.ean; existing.name = item.name || existing.name; existing.quantity = Number(item.quantity || 0); existing.expiry = item.expiry || existing.expiry || ''; existing.updatedAt = new Date().toISOString(); updated++; }
+    else { data.criticalItems.push({ id:uid(), ean:item.ean, name:item.name, quantity:Number(item.quantity || 0), expiry:item.expiry || '', updatedAt:new Date().toISOString() }); added++; }
   });
   await save();
   $('criticalExcelStatus').textContent = `Atualização concluída: ${added} novo(s), ${updated} atualizado(s), ${skipped} duplicado(s) ignorado(s).`;
@@ -2145,14 +2157,16 @@ function bind() {
     const filter = b.dataset.subnav;
     if (filter === 'critical' || filter === 'today') filterProducts($('search')?.value || '', filter);
   }));
-  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); if (productFilter === 'critical') criticalPage = 1; render(); }));
+  document.querySelectorAll('[data-product-filter]').forEach((b) => b.addEventListener('click', () => { productFilter = b.dataset.productFilter; localStorage.setItem('vpa-product-filter', productFilter); if (productFilter === 'critical') criticalPage = 1; productPage = 1; localStorage.setItem('vpa-product-page', productPage); render(); }));
   $('openCriticalImport')?.addEventListener('click', openCriticalImport);
   $('criticalSearch')?.addEventListener('input', (e) => { criticalSearch = e.target.value; criticalPage = 1; localStorage.setItem('vpa-critical-search', criticalSearch); render(); });
   $('criticalPrev')?.addEventListener('click', () => { criticalPage = Math.max(1, criticalPage - 1); localStorage.setItem('vpa-critical-page', criticalPage); render(); });
   $('criticalNext')?.addEventListener('click', () => { criticalPage += 1; localStorage.setItem('vpa-critical-page', criticalPage); render(); });
+  $('productPrev')?.addEventListener('click', () => { productPage = Math.max(1, productPage - 1); localStorage.setItem('vpa-product-page', productPage); render(); });
+  $('productNext')?.addEventListener('click', () => { productPage += 1; localStorage.setItem('vpa-product-page', productPage); render(); });
   document.querySelectorAll('[data-critical-delete]').forEach((b) => b.addEventListener('click', async () => { data.criticalItems = data.criticalItems.filter((item) => String(item.id) !== String(b.dataset.criticalDelete)); await save(); render(); }));
-  $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); render(); });
-  $('expiryMonthFilter')?.addEventListener('change', (e) => { expiryMonthFilter = e.target.value; localStorage.setItem('vpa-expiry-month-filter', expiryMonthFilter); render(); });
+  $('promotorCompanyFilter')?.addEventListener('change', (e) => { promotorCompanyFilter = e.target.value; productPage = 1; localStorage.setItem('vpa-promotor-company-filter', promotorCompanyFilter); localStorage.setItem('vpa-product-page', productPage); render(); });
+  $('expiryMonthFilter')?.addEventListener('change', (e) => { expiryMonthFilter = e.target.value; productPage = 1; localStorage.setItem('vpa-expiry-month-filter', expiryMonthFilter); localStorage.setItem('vpa-product-page', productPage); render(); });
   document.querySelectorAll('[data-batch-tab]').forEach((b) => b.addEventListener('click', () => { batchTab = b.dataset.batchTab; localStorage.setItem('vpa-batch-tab', batchTab); render(); }));
 
   const toggleAllProducts = () => { const ids = visibleProductIdsForCurrentFilter(); const allSelected = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => allSelected ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); };
@@ -2201,7 +2215,7 @@ function bind() {
   $('batchCorridor')?.addEventListener('change', updateBatchPreview);
   $('closeBatchDialog')?.addEventListener('click', () => $('batchDialog').close());
   $('cancelBatch')?.addEventListener('click', () => $('batchDialog').close());
-  $('search')?.addEventListener('input', (e) => { localStorage.setItem('vpa-product-search', e.target.value); refreshProductsSearchResults(); });
+  $('search')?.addEventListener('input', (e) => { productPage = 1; localStorage.setItem('vpa-product-page', productPage); localStorage.setItem('vpa-product-search', e.target.value); render(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
@@ -2217,6 +2231,7 @@ function refreshProductsSearchResults() {
   const allVisible = visibleProducts();
   let list = allVisible.filter((p) => productFilter === 'fefo' ? Boolean(p.fefo) : productFilter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
   list = list.filter(matchesExpiryMonth);
+  list = uniqueProductsByKey(list);
   if (productFilter === 'promotor' && promotorCompanyFilter !== 'all') {
     list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
   }
