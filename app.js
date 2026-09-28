@@ -1,4 +1,4 @@
-const APP_VERSION = 'V50';
+const APP_VERSION = 'V51';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -592,7 +592,7 @@ function scheduleRealtimeRender() {
   realtimeRenderTimer = window.setTimeout(() => { realtimeRenderTimer = null; render(); }, 250);
 }
 function notifyProductEvent(payload) {
-  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
   const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
   if (!row.id) return;
   const eventFingerprint = [eventType, row.id, row.updated_at || row.created_at || '', row.status || '', row.name || ''].join('|');
@@ -600,9 +600,18 @@ function notifyProductEvent(payload) {
   for (const [key, time] of recentProductEvents.entries()) if (now - time > 15000) recentProductEvents.delete(key);
   if (recentProductEvents.has(eventFingerprint)) return;
   recentProductEvents.set(eventFingerprint, now);
-  // REGRA V26: eventos de produtos (INSERT/UPDATE/DELETE) são silenciosos.
-  // Nenhum cadastro ou exclusão individual pode disparar notificação.
   mergeCloudProductEvent(payload);
+  if (eventType !== 'INSERT' || !canReceiveTeamProductNotifications()) return;
+  const actorId = row.registered_by || null;
+  if (actorId && teamRealtimeUserId && String(actorId) === String(teamRealtimeUserId)) return;
+  const name = row.name || 'Novo produto';
+  const key = 'new-product:' + row.id;
+  if (notificationWasShown(key)) return;
+  markNotificationShown(key);
+  const message = `Novo produto cadastrado: ${name}${row.ean ? ` · EAN ${row.ean}` : ''}.`;
+  showTeamToast(message, 'team');
+  showRealtimeNotification('Vencimento PA · Novo produto', message, 'vpa-new-product-' + row.id);
+  window.setTimeout(() => runExpiryNotifications().catch(() => {}), 250);
 }
 
 function localProductFromCloud(row) {
@@ -831,8 +840,8 @@ async function refreshRebaixaOnReturn() {
   try { await mergeCloudRebaixaItems(view === 'products' && productFilter === 'rebaixa'); }
   catch (error) { console.warn('[VPA] Atualização ao retornar ao aplicativo:', error.message || error); }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRebaixaOnReturn(); });
-window.addEventListener('focus', refreshRebaixaOnReturn);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refreshRebaixaOnReturn(); runExpiryNotifications().catch(() => {}); } });
+window.addEventListener('focus', () => { refreshRebaixaOnReturn(); runExpiryNotifications().catch(() => {}); });
 
 function flushRebaixaInsertNotifications() {
   rebaixaInsertTimer = null;
@@ -1075,16 +1084,92 @@ function notifyProfileEvent(payload) {
 }
 
 function notifyPromotorProductEvent(payload) {
-  const eventType = payload?.eventType || payload?.event || 'UPDATE';
+  const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
   const row = payload?.new || payload?.record || payload?.old || {};
   const name = row?.name || 'Produto do Promotor PA';
   mergeCloudPromotorProducts(true).catch((error) => console.warn('[VPA] Atualização Promotor PA:', error));
-  showTeamToast((eventType === 'DELETE' ? 'Produto removido do Promotor PA: ' : ' Produto atualizado no Promotor PA: ') + name, 'success');
+  if (eventType !== 'INSERT' || !canReceiveTeamProductNotifications()) return;
+  const actorId = row.user_id || null;
+  if (actorId && teamRealtimeUserId && String(actorId) === String(teamRealtimeUserId)) return;
+  const key = 'new-promotor-product:' + row.id;
+  if (notificationWasShown(key)) return;
+  markNotificationShown(key);
+  const company = row.company ? ` · ${row.company}` : '';
+  const message = `Novo produto do Promotor PA: ${name}${company}.`;
+  showTeamToast(message, 'team');
+  showRealtimeNotification('Vencimento PA · Produto do Promotor', message, 'vpa-new-promotor-product-' + row.id);
 }
 
 
 function isAdministrator() {
   return String(window.VPA_PROFILE?.role || '').toLowerCase() === 'admin';
+}
+
+function canReceiveTeamProductNotifications() {
+  const role = String(window.VPA_PROFILE?.role || '').toLowerCase();
+  return role === 'admin' || role === 'chefe' || role === 'gerencia' || role === 'pleno' || role === 'pleno_1' || role === 'pleno_2';
+}
+
+function notificationLedger() {
+  try {
+    const raw = localStorage.getItem('vpa-notification-ledger');
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) { return {}; }
+}
+function saveNotificationLedger(ledger) {
+  try { localStorage.setItem('vpa-notification-ledger', JSON.stringify(ledger)); } catch (_) {}
+}
+function notificationWasShown(key) {
+  const ledger = notificationLedger();
+  return Boolean(ledger[key]);
+}
+function markNotificationShown(key) {
+  const ledger = notificationLedger();
+  ledger[key] = new Date().toISOString();
+  const entries = Object.entries(ledger).sort((a,b) => String(b[1]).localeCompare(String(a[1]))).slice(0, 2000);
+  saveNotificationLedger(Object.fromEntries(entries));
+}
+function productNotificationKey(product) {
+  return String(product?.id || product?.sourceId || product?.ean || product?.name || 'produto');
+}
+function daysTo(date) {
+  if (!date) return NaN;
+  const target = new Date(String(date).slice(0,10) + 'T12:00:00');
+  const base = new Date();
+  base.setHours(12,0,0,0);
+  return Math.round((target - base) / 86400000);
+}
+async function runExpiryNotifications() {
+  if (!canReceiveTeamProductNotifications()) return;
+  const products = uniqueProductsByKey(Array.isArray(data.products) ? data.products : []).filter((p) => p?.expiry && !p.piqueConcluido && p.status !== 'resolvido');
+  const groups = new Map();
+  for (const product of products) {
+    const days = daysTo(product.expiry);
+    if (!Number.isFinite(days) || days < 0 || days > 30) continue;
+    let eligible = false;
+    let mode = '';
+    if (days === 30) { eligible = true; mode = '30'; }
+    else if (days === 20) { eligible = true; mode = '20'; }
+    else if (days <= 10) { eligible = true; mode = 'daily-' + days; }
+    if (!eligible) continue;
+    const key = 'expiry:' + mode + ':' + (days <= 10 ? today() : productNotificationKey(product));
+    if (notificationWasShown(key)) continue;
+    if (!groups.has(mode)) groups.set(mode, { days, products: [], keys: [] });
+    const group = groups.get(mode);
+    group.products.push(product);
+    group.keys.push(key);
+  }
+  for (const [mode, group] of groups) {
+    if (!group.products.length) continue;
+    const count = group.products.length;
+    const days = group.days;
+    const message = `${count} produto${count === 1 ? '' : 's'} ${days === 0 ? 'vence hoje' : `vence${count === 1 ? '' : 'm'} em ${days} dia${days === 1 ? '' : 's'}`}.`;
+    const title = days === 0 ? 'Vencimento PA · Vencem hoje' : `Vencimento PA · ${days} dias para vencer`;
+    showTeamToast(message, 'warning');
+    await showRealtimeNotification(title, message, 'vpa-expiry-' + mode + '-' + (days <= 10 ? today() : days));
+    group.keys.forEach(markNotificationShown);
+  }
 }
 function roleLabel(role) {
   return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }[role] || role || 'Usuário');
@@ -1146,6 +1231,7 @@ async function initTeamRealtime() {
     await mergeCloudPromotorProducts(false);
     await mergeCloudRebaixaItems(false);
     render();
+    await runExpiryNotifications().catch((error) => console.warn('[VPA] Alertas de validade:', error));
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const temporaryBatchChannel = await window.VPASupabase.subscribeTemporaryBatchItems(notifyTemporaryBatchItemEvent);
