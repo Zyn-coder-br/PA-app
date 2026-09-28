@@ -222,7 +222,7 @@
   });
 })();
 </script>
-<script src="supabase-client.js"></script><script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script><script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="app.js"></script>
+<script src="supabase-client.js"></script><script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script><script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><dialog id="retroBatchDialog"><form id="retroBatchForm"><div class="dialog-head"><div><div class="eyebrow">BATIDA RETROATIVA</div><h2>Registrar conferência anterior</h2><p class="dialog-help">Escolha o corredor e a data em que a batida realmente foi realizada.</p></div><button type="button" id="closeRetroBatchDialog" class="close-btn" aria-label="Fechar">×</button></div><label for="retroBatchCorridor">Corredor<select id="retroBatchCorridor" required></select></label><label for="retroBatchDate">Data em que a batida foi realizada<input id="retroBatchDate" type="date" required></label><div class="dialog-actions"><button type="button" class="secondary" id="cancelRetroBatch">Cancelar</button><button type="submit" class="primary">Registrar batida</button></div></form></dialog><script src="app.js"></script>
 
 <script>
   if ('serviceWorker' in navigator) {

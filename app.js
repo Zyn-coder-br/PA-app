@@ -1,4 +1,4 @@
-const APP_VERSION = 'V51';
+const APP_VERSION = 'V52';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -11,6 +11,7 @@ let promotorCompanyFilter = localStorage.getItem('vpa-promotor-company-filter') 
 let expiryMonthFilter = localStorage.getItem('vpa-expiry-month-filter') || 'all';
 let criticalPage = Number(localStorage.getItem('vpa-critical-page') || 1) || 1;
 let productPage = Number(localStorage.getItem('vpa-product-page') || 1) || 1;
+let expiryPage = Number(localStorage.getItem('vpa-expiry-page') || 1) || 1;
 let criticalSearch = localStorage.getItem('vpa-critical-search') || '';
 const activeBatch = () => data.batches.find((b) => b.id === data.activeBatchId && b.status === 'aberta');
 const $ = (id) => document.getElementById(id);
@@ -463,14 +464,20 @@ function batches() {
   const activeProducts = active ? data.products.filter((p) => String(p.batchId || '') === String(active.id) || (p.origemCadastro === 'batida' && !p.batchId && String(p.corridorId) === String(active.corridorId))) : [];
   const current = batchTab === 'current';
   const history = data.batches.slice().reverse();
+  const retro = batchTab === 'retro';
   return `<div class="section-head"><div><div class="eyebrow">OPERAÇÃO</div><h2>Batidas</h2></div><button class="primary" id="newBatch">+ Registrar</button></div>
-  <div class="subnav"><button class="subnav-btn ${current?'active':''}" data-batch-tab="current">Batida atual</button><button class="subnav-btn ${!current?'active':''}" data-batch-tab="history">Histórico</button></div>
-  ${current ? (active ? `<div class="panel"><div class="panel-title">Batida em andamento</div><div class="panel-sub">${esc(active.corridorName)} · iniciada em ${fmt(active.date)}</div><div class="toolbar"><button class="primary" id="addBatchProduct">+ Produto desta batida</button><button class="secondary" id="cancelOpenBatch">Cancelar batida</button><button class="secondary" id="finishBatch" ${activeProducts.length ? '' : 'disabled'}>Finalizar batida</button></div><div class="meta">Produtos vinculados: ${activeProducts.length}</div><div class="batch-products"><h3>Produtos desta batida (${activeProducts.length})</h3>${groupedProductRows(activeProducts) || '<div class="empty">Nenhum produto cadastrado nesta batida.</div>'}</div></div>` : `<div class="panel empty">Nenhuma batida em andamento. Toque em + Registrar para começar.</div>`) : `<div class="panel"><p class="panel-sub">Histórico organizado pela contagem crescente de dias.</p><div class="panel-head"><div class="panel-title">Supervisão dos 22 corredores</div><span class="panel-sub">0–6 verde · 7–14 amarelo · 15+ vermelho</span></div><div class="list">${corridorHistoryRows() || '<div class="empty">Nenhum corredor cadastrado.</div>'}</div><div class="panel-head" style="margin-top:18px"><div class="panel-title">Batidas realizadas</div><span class="panel-sub">Corredor → Data</span></div><div class="list">${batchHistoryRows() || '<div class="empty">Nenhuma batida finalizada.</div>'}</div></div>`}`;
+  <div class="subnav"><button class="subnav-btn ${current?'active':''}" data-batch-tab="current">Batida atual</button><button class="subnav-btn ${(!current && !retro)?'active':''}" data-batch-tab="history">Histórico</button><button class="subnav-btn ${retro?'active':''}" data-batch-tab="retro">Registrar batida retroativa</button></div>
+  ${retro ? `<div class="panel"><div class="panel-title">Registrar batida retroativa</div><p class="panel-sub">Use quando a conferência foi feita em uma data anterior, mas não pôde ser registrada no dia. A data escolhida será usada no histórico e no progresso.</p><button class="primary" id="openRetroBatch">${uiIcon('calendar',16)} Registrar data da batida</button></div>` : current ? (active ? `<div class="panel"><div class="panel-title">Batida em andamento</div><div class="panel-sub">${esc(active.corridorName)} · iniciada em ${fmt(active.date)}</div><div class="toolbar"><button class="primary" id="addBatchProduct">+ Produto desta batida</button><button class="secondary" id="cancelOpenBatch">Cancelar batida</button><button class="secondary" id="finishBatch" ${activeProducts.length ? '' : 'disabled'}>Finalizar batida</button></div><div class="meta">Produtos vinculados: ${activeProducts.length}</div><div class="batch-products"><h3>Produtos desta batida (${activeProducts.length})</h3>${groupedProductRows(activeProducts) || '<div class="empty">Nenhum produto cadastrado nesta batida.</div>'}</div></div>` : `<div class="panel empty">Nenhuma batida em andamento. Toque em + Registrar para começar.</div>`) : `<div class="panel"><p class="panel-sub">Histórico organizado pela contagem crescente de dias.</p><div class="panel-head"><div class="panel-title">Supervisão dos 22 corredores</div><span class="panel-sub">0–6 verde · 7–14 amarelo · 15+ vermelho</span></div><div class="list">${corridorHistoryRows() || '<div class="empty">Nenhum corredor cadastrado.</div>'}</div><div class="panel-head" style="margin-top:18px"><div class="panel-title">Batidas realizadas</div><span class="panel-sub">Corredor → Data</span></div><div class="list">${batchHistoryRows() || '<div class="empty">Nenhuma batida finalizada.</div>'}</div></div>`}`;
 }
 function expiries() {
-  const tabs = [['today','Vence hoje'],['tomorrow','Vence amanhã'],['ten','2–10 dias'],['thirty','11–30 dias'],['future','31 dias+']];
-  const list = visibleProducts().filter((p) => expiryGroupFor(p, expiryFilter)).sort((a,b) => a.expiry.localeCompare(b.expiry));
-  return `<div class="section-head"><div><div class="eyebrow">ACOMPANHAMENTO</div><h2>Vencimentos</h2></div></div><div class="subnav expiry-tabs">${tabs.map(([key,label]) => `<button class="subnav-btn ${expiryFilter===key?'active':''}" data-expiry-filter="${key}">${label}</button>`).join('')}</div><div class="panel"><div class="list">${groupedProductRows(list) || '<div class="empty">Nenhum produto nesta categoria.</div>'}</div></div>`;
+  const tabs = [['today','Hoje'],['tomorrow','Amanhã'],['ten','Até 10 dias'],['thirty','Até 30 dias']];
+  let list = visibleProducts().filter((p) => expiryGroupFor(p, expiryFilter)).sort((a,b) => a.expiry.localeCompare(b.expiry));
+  const totalPages = Math.max(1, Math.ceil(list.length / 20));
+  expiryPage = Math.min(Math.max(1, expiryPage), totalPages);
+  const start = (expiryPage - 1) * 20;
+  const pageList = list.slice(start, start + 20);
+  const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="expiryPrev" ${expiryPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${expiryPage}</strong> de ${totalPages} · ${list.length} produtos</span><button type="button" class="secondary" id="expiryNext" ${expiryPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
+  return `<div class="section-head"><div><div class="eyebrow">ACOMPANHAMENTO</div><h2>Vencimentos</h2></div></div><div class="subnav expiry-tabs">${tabs.map(([key,label]) => `<button class="subnav-btn ${expiryFilter===key?'active':''}" data-expiry-filter="${key}">${label}</button>`).join('')}</div><div class="panel"><div class="panel-head"><div class="panel-sub">${list.length} produto${list.length === 1 ? '' : 's'} · 20 por página</div><button type="button" class="secondary" id="expirySelectPage">Marcar/desmarcar página</button></div><div class="list">${groupedProductRows(pageList,{selectable:true}) || '<div class="empty">Nenhum produto nesta categoria.</div>'}</div>${pagination}</div>`;
 }
 function expiryGroupFor(p, filter) {
   const d = daysTo(p.expiry);
@@ -478,7 +485,6 @@ function expiryGroupFor(p, filter) {
   if (filter === 'tomorrow') return d === 1;
   if (filter === 'ten') return d >= 2 && d <= 10;
   if (filter === 'thirty') return d >= 11 && d <= 30;
-  if (filter === 'future') return d >= 31;
   return true;
 }
 let expiryFilter = localStorage.getItem('vpa-expiry-filter') || 'today';
@@ -1148,28 +1154,37 @@ async function runExpiryNotifications() {
     const days = daysTo(product.expiry);
     if (!Number.isFinite(days) || days < 0 || days > 30) continue;
     let eligible = false;
-    let mode = '';
-    if (days === 30) { eligible = true; mode = '30'; }
-    else if (days === 20) { eligible = true; mode = '20'; }
-    else if (days <= 10) { eligible = true; mode = 'daily-' + days; }
+    if (days === 30 || days === 20 || days <= 10) eligible = true;
     if (!eligible) continue;
-    const key = 'expiry:' + mode + ':' + (days <= 10 ? today() : productNotificationKey(product));
+    const mode = days <= 10 ? `daily-${today()}` : `milestone-${days}`;
+    if (!groups.has(mode)) groups.set(mode, new Map());
+    const dayGroups = groups.get(mode);
+    const dayKey = String(days);
+    if (!dayGroups.has(dayKey)) dayGroups.set(dayKey, { days, count: 0 });
+    dayGroups.get(dayKey).count += 1;
+  }
+  const batches = [];
+  for (const [mode, dayGroups] of groups) {
+    const key = `expiry-summary:${mode}`;
     if (notificationWasShown(key)) continue;
-    if (!groups.has(mode)) groups.set(mode, { days, products: [], keys: [] });
-    const group = groups.get(mode);
-    group.products.push(product);
-    group.keys.push(key);
+    const ordered = Array.from(dayGroups.values()).sort((a,b) => a.days - b.days);
+    if (!ordered.length) continue;
+    batches.push({ key, ordered });
   }
-  for (const [mode, group] of groups) {
-    if (!group.products.length) continue;
-    const count = group.products.length;
-    const days = group.days;
-    const message = `${count} produto${count === 1 ? '' : 's'} ${days === 0 ? 'vence hoje' : `vence${count === 1 ? '' : 'm'} em ${days} dia${days === 1 ? '' : 's'}`}.`;
-    const title = days === 0 ? 'Vencimento PA · Vencem hoje' : `Vencimento PA · ${days} dias para vencer`;
-    showTeamToast(message, 'warning');
-    await showRealtimeNotification(title, message, 'vpa-expiry-' + mode + '-' + (days <= 10 ? today() : days));
-    group.keys.forEach(markNotificationShown);
+  if (!batches.length) return;
+  const lines = [];
+  const keys = [];
+  for (const batch of batches) {
+    for (const group of batch.ordered) {
+      const label = group.days === 0 ? 'vencem hoje' : group.days === 1 ? 'vencem amanhã' : `vencem em ${group.days} dias`;
+      lines.push(`${group.count} produto${group.count === 1 ? '' : 's'} ${label}`);
+    }
+    keys.push(batch.key);
   }
+  const message = lines.join('\n');
+  showTeamToast(message.replace(/\n/g, ' · '), 'warning');
+  await showRealtimeNotification('Vencimento PA · Resumo de validade', message, 'vpa-expiry-summary-' + today());
+  keys.forEach(markNotificationShown);
 }
 function roleLabel(role) {
   return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }[role] || role || 'Usuário');
@@ -1437,6 +1452,30 @@ function openBatch() {
   updateBatchPreview();
   $('batchDialog').showModal();
 }
+function openRetroBatchDialog() {
+  $('retroBatchCorridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('retroBatchDate').value = today();
+  $('retroBatchDialog').showModal();
+}
+async function registerRetroBatch(event) {
+  event.preventDefault();
+  const corridor = data.corridors.find((c) => c.id === $('retroBatchCorridor').value);
+  const date = $('retroBatchDate').value;
+  if (!corridor || !date) return;
+  const batch = { id: uid(), corridorId: corridor.id, corridorName: corridor.name, date, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), status: 'finalizada', productCount: 0, retroativa: true, syncPending: true };
+  data.batches.push(batch);
+  const c = data.corridors.find((x) => x.id === corridor.id);
+  if (c) {
+    const previous = c.lastCheck;
+    if (!previous || date > previous) c.lastCheck = date;
+  }
+  await save();
+  window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização da batida retroativa falhou:', error.message || error));
+  $('retroBatchDialog').close();
+  showTeamToast(`Batida registrada em ${fmt(date)} para ${corridor.name}.`, 'success');
+  batchTab = 'history';
+  render();
+}
 async function startBatch(event) {
   if (event) event.preventDefault();
   const corridor = data.corridors.find((c) => c.id === $('batchCorridor').value);
@@ -1643,7 +1682,18 @@ function currentProductSelection() {
 }
 function visibleProductIdsForCurrentFilter() {
   const filter = productFilter;
-  return visibleProducts().filter((p) => (filter === 'fefo' ? p.fefo : filter === 'promotor' ? p.promotor : true) && matchesExpiryMonth(p)).map((p) => p.id);
+  let list = visibleProducts().filter((p) => {
+    if (filter === 'fefo') return Boolean(p.fefo);
+    if (filter === 'promotor') return Boolean(p.promotor);
+    return !p.fefo && !p.promotor;
+  });
+  list = list.filter(matchesExpiryMonth);
+  list = uniqueProductsByKey(list);
+  if (filter === 'promotor' && promotorCompanyFilter !== 'all') list = list.filter((p) => String(p.company || '') === promotorCompanyFilter);
+  const searchValue = localStorage.getItem('vpa-product-search') || '';
+  if (searchValue.trim()) { const q = searchValue.trim().toLowerCase(); list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q)); }
+  const start = (Math.max(1, productPage) - 1) * 20;
+  return list.slice(start, start + 20).map((p) => p.id);
 }
 function openBulkStatusDialog() {
   const ids = currentProductSelection();
@@ -2339,11 +2389,18 @@ function bind() {
   $('batchCorridor')?.addEventListener('change', updateBatchPreview);
   $('closeBatchDialog')?.addEventListener('click', () => $('batchDialog').close());
   $('cancelBatch')?.addEventListener('click', () => $('batchDialog').close());
+  $('openRetroBatch')?.addEventListener('click', openRetroBatchDialog);
+  $('closeRetroBatchDialog')?.addEventListener('click', () => $('retroBatchDialog').close());
+  $('cancelRetroBatch')?.addEventListener('click', () => $('retroBatchDialog').close());
+  $('retroBatchForm')?.addEventListener('submit', registerRetroBatch);
   $('search')?.addEventListener('input', (e) => { productPage = 1; localStorage.setItem('vpa-product-page', productPage); localStorage.setItem('vpa-product-search', e.target.value); render(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
-  document.querySelectorAll('[data-expiry-filter]').forEach((b) => b.onclick = () => { expiryFilter = b.dataset.expiryFilter; localStorage.setItem('vpa-expiry-filter', expiryFilter); render(); });
+  document.querySelectorAll('[data-expiry-filter]').forEach((b) => b.onclick = () => { expiryFilter = b.dataset.expiryFilter; expiryPage = 1; localStorage.setItem('vpa-expiry-filter', expiryFilter); localStorage.setItem('vpa-expiry-page', expiryPage); render(); });
+  $('expiryPrev')?.addEventListener('click', () => { expiryPage = Math.max(1, expiryPage - 1); localStorage.setItem('vpa-expiry-page', expiryPage); render(); });
+  $('expiryNext')?.addEventListener('click', () => { expiryPage += 1; localStorage.setItem('vpa-expiry-page', expiryPage); render(); });
+  $('expirySelectPage')?.addEventListener('click', () => { const ids = Array.from(document.querySelectorAll('[data-select-product]')).map((b) => b.dataset.selectProduct); const all = ids.length > 0 && ids.every((id) => selectedProducts.has(id)); ids.forEach((id) => all ? selectedProducts.delete(id) : selectedProducts.add(id)); render(); });
   document.querySelectorAll('[data-pending-filter]').forEach((b) => b.onclick = () => { pendingFilter = b.dataset.pendingFilter; localStorage.setItem('vpa-pending-filter', pendingFilter); selectedProducts.clear(); render(); });
   document.querySelectorAll('[data-select-product]').forEach((b) => b.onchange = () => { if (b.checked) selectedProducts.add(b.dataset.selectProduct); else selectedProducts.delete(b.dataset.selectProduct); });
 }
