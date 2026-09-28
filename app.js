@@ -1,4 +1,4 @@
-const APP_VERSION = 'V49';
+const APP_VERSION = 'V50';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -109,6 +109,14 @@ function save() {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
+}
+let deferredSaveTimer = null;
+function persistSoon(delay = 80) {
+  window.clearTimeout(deferredSaveTimer);
+  deferredSaveTimer = window.setTimeout(() => {
+    deferredSaveTimer = null;
+    save().catch((error) => console.warn('[VPA] Falha ao persistir atualização local:', error));
+  }, delay);
 }
 function load() {
   return new Promise((resolve) => {
@@ -1447,52 +1455,82 @@ async function finishBatch() {
 async function lookupEAN(ean) {
   const code = String(ean || '').replace(/\D/g, '');
   if (!code) return;
-  $('lookupMessage').textContent = 'Consultando produto na internet…';
+
+  // Primeiro procura no catálogo local: isso deixa a leitura de EAN imediata
+  // mesmo quando a internet está lenta ou indisponível.
+  const localProduct = data.products.find((p) => String(p.ean || '').replace(/\D/g, '') === code);
+  if (localProduct) {
+    if (!$('name').value.trim()) $('name').value = localProduct.name || '';
+    if (!$('expiry').value && localProduct.expiry) $('expiry').value = localProduct.expiry;
+    if (!$('quantity').value || $('quantity').value === '1') $('quantity').value = localProduct.quantity || 1;
+    $('lookupMessage').textContent = 'Produto encontrado no catálogo local.';
+    return localProduct;
+  }
+
+  $('lookupMessage').textContent = 'Consultando base online…';
   try {
     const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`, { headers: { Accept: 'application/json' } });
     const result = await response.json();
     const product = result.status === 1 ? result.product : null;
-    if (!product) { $('lookupMessage').textContent = 'Produto não encontrado na base online. Preencha manualmente.'; return; }
+    if (!product) { $('lookupMessage').textContent = 'Produto não encontrado na base online. Preencha manualmente.'; return null; }
     if (!$('name').value.trim()) $('name').value = product.product_name_pt || product.product_name || product.generic_name_pt || product.generic_name || '';
     const image = product.image_front_url || product.image_url || '';
     if (image && !$('photoData').value) { $('photoData').value = image; $('photoPreview').innerHTML = `<img src="${esc(image)}" alt="Prévia do produto">`; }
     $('lookupMessage').textContent = 'Dados encontrados na Open Food Facts.';
-  } catch { $('lookupMessage').textContent = 'Não foi possível consultar a internet. Você pode continuar manualmente.'; }
+    return product;
+  } catch {
+    $('lookupMessage').textContent = 'Não foi possível consultar a internet. Você pode continuar manualmente.';
+    return null;
+  }
 }
 let scanStream = null;
+let scannerRunId = 0;
 async function startScanner() {
   const dialog = $('scannerDialog');
   $('scanMessage').textContent = '';
+  if (scanStream) closeScanner();
   dialog.showModal();
   const video = $('scannerVideo');
+  video.setAttribute('playsinline', 'true');
+  video.muted = true;
+  const runId = ++scannerRunId;
   try {
     if (!('BarcodeDetector' in window)) throw new Error('Seu navegador não disponibiliza leitor automático.');
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    if (runId !== scannerRunId || !dialog.open) return;
     video.srcObject = scanStream;
     await video.play();
     const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
     const scan = async () => {
-      if (!dialog.open) return;
+      if (runId !== scannerRunId || !dialog.open) return;
       try {
         const codes = await detector.detect(video);
         if (codes.length && codes[0].rawValue) {
-          $('ean').value = codes[0].rawValue;
-          await lookupEAN(codes[0].rawValue);
+          const code = codes[0].rawValue;
+          $('ean').value = code;
+          // Fecha a câmera antes de qualquer consulta de rede.
           closeScanner();
+          // A busca online segue em segundo plano e não trava o leitor.
+          lookupEAN(code).catch(() => {});
           return;
         }
       } catch {}
-      requestAnimationFrame(scan);
+      window.setTimeout(() => requestAnimationFrame(scan), 180);
     };
     requestAnimationFrame(scan);
   } catch (error) {
-    $('scanMessage').textContent = error.message || 'Não foi possível abrir a câmera. Confira a permissão e use HTTPS/GitHub Pages.';
+    if (runId === scannerRunId) $('scanMessage').textContent = error.message || 'Não foi possível abrir a câmera. Confira a permissão e use HTTPS/GitHub Pages.';
   }
 }
 function closeScanner() {
+  scannerRunId += 1;
   if (scanStream) scanStream.getTracks().forEach((track) => track.stop());
   scanStream = null;
-  $('scannerVideo').srcObject = null;
+  const video = $('scannerVideo');
+  if (video) video.srcObject = null;
   if ($('scannerDialog').open) $('scannerDialog').close();
 }
 function openPhoto(productId) {
@@ -2256,14 +2294,60 @@ function filterProducts(query, filter) {
   $('productList').innerHTML = list.sort((a, b) => a.expiry.localeCompare(b.expiry)).map((p) => productRow(p)).join('') || '<div class="empty">Nenhum resultado.</div>';
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
 }
+async function syncSavedProductInBackground(product, corridorNumber, photoFile = null) {
+  try {
+    if (!window.VPASupabase?.isConfigured?.()) {
+      product.syncPending = false;
+      persistSoon();
+      return;
+    }
+    if (photoFile && window.VPASupabase?.uploadProductPhoto) {
+      try {
+        const photoCloudUrl = await window.VPASupabase.uploadProductPhoto(photoFile, product.id);
+        product.photoCloudUrl = photoCloudUrl;
+        if (photoCloudUrl) product.photo = photoCloudUrl;
+        persistSoon();
+      } catch (error) {
+        console.warn('[VPA] Upload da foto em segundo plano falhou:', error);
+        showTeamToast('Produto salvo. A foto será mantida localmente até a próxima sincronização.', 'warning');
+      }
+    }
+
+    let result = null;
+    if (product.isTemporaryBatchItem) {
+      if (typeof window.VPASupabase?.syncTemporaryBatchItem !== 'function') throw new Error('Rotina de salvamento temporário não disponível.');
+      result = await window.VPASupabase.syncTemporaryBatchItem({ ...product, corridorNumber });
+    } else if (window.VPASupabase?.syncProducts) {
+      result = await window.VPASupabase.syncProducts([{ ...product, corridorNumber }]);
+    }
+
+    const successful = product.isTemporaryBatchItem
+      ? Boolean(result?.id || result?.synced || result?.success)
+      : Boolean(result && !result.failed && result.synced === 1);
+
+    if (!successful) {
+      const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
+      showTeamToast('Produto salvo localmente. Sincronização pendente.' + detail, 'warning');
+      return;
+    }
+
+    product.syncPending = false;
+    persistSoon();
+    showTeamToast('Produto salvo e sincronizado.', 'success');
+  } catch (error) {
+    product.syncPending = true;
+    persistSoon();
+    const detail = error?.message ? ` Detalhe: ${error.message}` : '';
+    console.warn('[VPA] Sincronização automática do produto falhou:', error);
+    showTeamToast('Produto salvo localmente. Sincronização pendente.' + detail, 'warning');
+  }
+}
+
 $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
   const formBatchId = $('productBatchId')?.value || '';
-  // O campo oculto define explicitamente se o produto pertence a uma batida.
-  // Cadastro manual fora de uma batida deve permanecer sem batchId, mesmo
-  // quando existe outra batida aberta no armazenamento local.
   const batch = formBatchId
     ? data.batches.find((b) => String(b.id) === String(formBatchId) && b.status === 'aberta')
     : null;
@@ -2273,18 +2357,10 @@ $('productForm').addEventListener('submit', async (e) => {
     const duplicate = findExistingProduct({ ean: $('ean').value.trim(), name: $('name').value.trim() });
     if (duplicate) { showTeamToast('Este produto já existe na lista. O cadastro duplicado foi bloqueado.', 'warning'); return; }
   }
-  const isBatchProduct = Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id)));
-  let photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
-  if (pendingProductPhotoFile && window.VPASupabase?.uploadProductPhoto) {
-    try {
-      showTeamToast('Enviando foto para a nuvem...', 'info');
-      photoCloudUrl = await window.VPASupabase.uploadProductPhoto(pendingProductPhotoFile, id);
-    } catch (error) {
-      console.error('[VPA] Upload da foto do produto falhou:', error);
-      showTeamToast('A foto não foi enviada para a nuvem. O produto não será publicado com foto compartilhada.', 'warning');
-      return;
-    }
-  }
+
+  const photoFile = pendingProductPhotoFile;
+  pendingProductPhotoFile = null;
+  const photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
   const product = {
     id,
     name: $('name').value.trim(),
@@ -2294,67 +2370,34 @@ $('productForm').addEventListener('submit', async (e) => {
     quantity: Number($('quantity').value),
     status: $('status').value,
     createdAt: existing?.createdAt || new Date().toISOString(),
-    batchId: existing?.batchId ?? (isBatchProduct ? batch.id : null),
-    origemCadastro: existing?.origemCadastro || (isBatchProduct ? 'batida' : 'manual'),
+    batchId: existing?.batchId ?? (batch ? batch.id : null),
+    origemCadastro: existing?.origemCadastro || (batch ? 'batida' : 'manual'),
     categoriaCadastro: selectedType,
-    photo: photoCloudUrl || $('photoData').value || existing?.photo || '',
+    photo: $('photoData').value || existing?.photo || '',
     photoCloudUrl,
     tag: existing?.tag || '',
-    // Regra definitiva: qualquer produto salvo dentro de uma batida aberta
-    // vai exclusivamente para a tabela temporária, nunca para products.
-    isTemporaryBatchItem: isBatchProduct,
-    // Cada opção envia o produto somente para sua lista correspondente.
-    fefo: document.querySelector('input[name=productType]:checked')?.value === 'fefo',
-    promotor: document.querySelector('input[name=productType]:checked')?.value === 'promotor',
+    isTemporaryBatchItem: Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id))),
+    fefo: selectedType === 'fefo',
+    promotor: selectedType === 'promotor',
     syncPending: true,
     batchStartedAt: batch?.startedAt || existing?.batchStartedAt || null,
     batchNotes: batch?.notes || existing?.batchNotes || null
   };
+
   if (existing) Object.assign(existing, product); else data.products.push(product);
-  // Atualiza a tela imediatamente: o cadastro local não pode depender do resultado
-  // da sincronização com a nuvem para aparecer na lista.
-  await save();
-  render();
-  const corridor = data.corridors.find((c) => c.id === product.corridorId);
-  try {
-    // Nunca use syncProducts para itens vinculados a uma batida aberta.
-    // Se a rotina temporária não estiver disponível, interrompemos o envio
-    // em vez de publicar acidentalmente no catálogo geral.
-    let result;
-    if (product.isTemporaryBatchItem) {
-      if (typeof window.VPASupabase?.syncTemporaryBatchItem !== 'function') {
-        throw new Error('Rotina de salvamento temporário não disponível.');
-      }
-      result = await window.VPASupabase.syncTemporaryBatchItem({ ...product, corridorNumber: corridor?.number });
-    } else {
-      result = await window.VPASupabase?.syncProducts?.([{ ...product, corridorNumber: corridor?.number }]);
-    }
-    const successful = product.isTemporaryBatchItem
-      ? Boolean(result?.id || result?.synced || result?.success)
-      : Boolean(result && !result.failed && result.synced === 1);
-    if (!successful) {
-      const detail = result?.errors?.[0]?.message ? ` Detalhe: ${result.errors[0].message}` : '';
-      showTeamToast('Produto salvo localmente, mas não foi confirmado no banco compartilhado.' + detail, 'warning');
-    } else {
-      product.syncPending = false;
-      await save();
-      console.info('[VPA] Registro confirmado no Supabase:', product.id);
-      showTeamToast(product.isTemporaryBatchItem ? 'Produto mantido na preparação da batida.' : 'Produto confirmado no banco compartilhado.', 'success');
-    }
-  } catch (error) {
-    // Nunca perder o estado pendente quando a nuvem falhar.
-    product.syncPending = true;
-    await save();
-    render();
-    const detail = error?.message ? ` Detalhe: ${error.message}` : '';
-    console.error('[VPA] Sincronização automática do produto falhou:', error);
-    showTeamToast('Produto salvo localmente, mas não foi enviado ao banco compartilhado.' + detail, 'warning');
-  }
-  pendingProductPhotoFile = null;
+
+  // Primeiro atualizamos a interface. O envio para o Supabase e o upload da
+  // foto acontecem em segundo plano, sem prender o botão Salvar.
   $('productDialog').close();
   $('corridor').disabled = false;
   render();
+  persistSoon();
+  showTeamToast('Produto salvo localmente. Sincronizando em segundo plano…', 'info');
+
+  const corridor = data.corridors.find((c) => c.id === product.corridorId);
+  syncSavedProductInBackground(product, corridor?.number, photoFile);
 });
+
 $('restoreInput').onchange = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async () => { try { data = JSON.parse(reader.result); seed(); data.corridors.forEach((c) => { if (!c.name) c.name = `Corredor ${c.number}`; }); await save(); render(); alert('Backup restaurado com sucesso.'); } catch { alert('Backup inválido.'); } }; reader.readAsText(file); };
 function installHeaderBehavior() {
   const header = document.querySelector('.app-header');
