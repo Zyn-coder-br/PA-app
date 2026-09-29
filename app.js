@@ -1,4 +1,4 @@
-const APP_VERSION = 'V52';
+const APP_VERSION = 'V55';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -19,6 +19,89 @@ const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random());
 const fmt = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function releasePendingProductPhotoPreview() {
+  if (pendingProductPhotoObjectUrl) {
+    URL.revokeObjectURL(pendingProductPhotoObjectUrl);
+    pendingProductPhotoObjectUrl = null;
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Não foi possível preparar a foto.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('O navegador não conseguiu comprimir a foto.'));
+    }, type, quality);
+  });
+}
+
+async function compressProductImage(file) {
+  if (!file || !String(file.type || '').startsWith('image/')) {
+    throw new Error('Arquivo de imagem inválido.');
+  }
+
+  const maxDimension = 1280;
+  const maxBytes = 450 * 1024;
+  let bitmap = null;
+  let sourceUrl = null;
+
+  try {
+    if ('createImageBitmap' in window) {
+      try { bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (_) { bitmap = null; }
+    }
+
+    let source = bitmap;
+    if (!source) {
+      sourceUrl = URL.createObjectURL(file);
+      source = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Não foi possível ler a foto da câmera.'));
+        image.src = sourceUrl;
+      });
+    }
+
+    const originalWidth = source.width || source.naturalWidth || 0;
+    const originalHeight = source.height || source.naturalHeight || 0;
+    if (!originalWidth || !originalHeight) throw new Error('A foto não possui dimensões válidas.');
+
+    const scale = Math.min(1, maxDimension / Math.max(originalWidth, originalHeight));
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('Não foi possível preparar a imagem.');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, width, height);
+
+    let blob = null;
+    for (const quality of [0.76, 0.68, 0.60, 0.52]) {
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (blob.size <= maxBytes) break;
+    }
+    if (!blob) throw new Error('Não foi possível comprimir a foto.');
+
+    const dataUrl = await blobToDataUrl(blob);
+    const compressedFile = new File([blob], 'produto.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+    return { file: compressedFile, dataUrl, blob, width, height };
+  } finally {
+    if (bitmap?.close) bitmap.close();
+    if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+  }
+}
 const expiryMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function uiIcon(name, size = 18) {
   const paths = {
@@ -510,6 +593,8 @@ let presenceTimer = null;
 let teamAdminRefreshTimer = null;
 let teamRealtimeRefreshTimer = null;
 let pendingProductPhotoFile = null;
+let pendingProductPhotoObjectUrl = null;
+let productPhotoProcessing = false;
 let cloudSaveTimer = null;
 function scheduleCloudSave() {
   window.clearTimeout(cloudSaveTimer);
@@ -1456,7 +1541,9 @@ function render() {
   bind();
 }
 function openProduct(productId = null, forceManual = false) {
+  releasePendingProductPhotoPreview();
   pendingProductPhotoFile = null;
+  productPhotoProcessing = false;
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
   const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
@@ -2407,7 +2494,32 @@ function bind() {
   $('closeScanner')?.addEventListener('click', closeScanner);
   $('closePhotoDialog')?.addEventListener('click', () => $('photoDialog').close());
   document.querySelectorAll('[data-open-photo]').forEach((b) => b.addEventListener('click', () => openPhoto(b.dataset.openPhoto)));
-  $('photoInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (!file) return; pendingProductPhotoFile = file; const reader = new FileReader(); reader.onload = () => { $('photoData').value = reader.result; $('photoPreview').innerHTML = `<img src="${esc(reader.result)}" alt="Prévia do produto">`; }; reader.readAsDataURL(file); });
+  $('photoInput')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    releasePendingProductPhotoPreview();
+    pendingProductPhotoFile = null;
+    productPhotoProcessing = true;
+    $('photoData').value = '';
+    $('photoPreview').innerHTML = '<span>Preparando foto…</span>';
+    const saveButton = $('saveProduct');
+    if (saveButton) saveButton.disabled = true;
+    try {
+      const prepared = await compressProductImage(file);
+      pendingProductPhotoFile = prepared.file;
+      $('photoData').value = prepared.dataUrl;
+      pendingProductPhotoObjectUrl = URL.createObjectURL(prepared.blob);
+      $('photoPreview').innerHTML = `<img src="${pendingProductPhotoObjectUrl}" alt="Prévia do produto">`;
+      $('lookupMessage').textContent = `Foto otimizada para ${prepared.width}×${prepared.height} e ${Math.round(prepared.blob.size / 1024)} KB.`;
+    } catch (error) {
+      $('photoPreview').innerHTML = '<span>Não foi possível preparar a foto.</span>';
+      $('lookupMessage').textContent = error?.message || 'Não foi possível preparar a foto.';
+      showTeamToast('Não foi possível preparar a foto. Você pode salvar o produto sem ela.', 'warning');
+    } finally {
+      productPhotoProcessing = false;
+      if (saveButton) saveButton.disabled = false;
+    }
+  });
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
@@ -2582,6 +2694,10 @@ async function syncSavedProductInBackground(product, corridorNumber, photoFile =
 
 $('productForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (productPhotoProcessing) {
+    showTeamToast('A foto ainda está sendo preparada. Aguarde um instante.', 'info');
+    return;
+  }
   const id = $('productId').value || uid();
   const existing = data.products.find((p) => p.id === id);
   const formBatchId = $('productBatchId')?.value || '';
@@ -2597,6 +2713,7 @@ $('productForm').addEventListener('submit', async (e) => {
 
   const photoFile = pendingProductPhotoFile;
   pendingProductPhotoFile = null;
+  releasePendingProductPhotoPreview();
   const photoCloudUrl = existing?.photoCloudUrl || (existing?.photo && /^https?:\/\//i.test(existing.photo) ? existing.photo : '');
   const product = {
     id,
