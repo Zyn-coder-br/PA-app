@@ -515,7 +515,7 @@ function products() {
   const productPagination = totalProductPages > 1 ? `<div class="critical-pagination product-pagination"><button type="button" class="secondary" id="productPrev" ${productPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${productPage}</strong> de ${totalProductPages} · ${list.length} produtos</span><button type="button" class="secondary" id="productNext" ${productPage >= totalProductPages ? 'disabled' : ''}>Próxima</button></div>` : '';
   const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
-        <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div><label class="expiry-month-filter-label" for="expiryMonthFilter">Validade<select id="expiryMonthFilter" class="expiry-month-filter"><option value="all" ${expiryMonthFilter === 'all' ? 'selected' : ''}>Todos os meses</option>${expiryMonths.map((month,index) => `<option value="${index+1}" ${String(expiryMonthFilter) === String(index+1) ? 'selected' : ''}>${month}</option>`).join('')}</select></label>
+        <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" type="search" inputmode="search" autocomplete="off" enterkeyhint="search" autocapitalize="none" spellcheck="false" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div><label class="expiry-month-filter-label" for="expiryMonthFilter">Validade<select id="expiryMonthFilter" class="expiry-month-filter"><option value="all" ${expiryMonthFilter === 'all' ? 'selected' : ''}>Todos os meses</option>${expiryMonths.map((month,index) => `<option value="${index+1}" ${String(expiryMonthFilter) === String(index+1) ? 'selected' : ''}>${month}</option>`).join('')}</select></label>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
         <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
       </div>
@@ -2599,7 +2599,7 @@ function bind() {
   $('retroBatchForm')?.addEventListener('submit', registerRetroBatch);
   document.querySelectorAll('[data-edit-batch]').forEach((b) => b.addEventListener('click', () => editBatch(b.dataset.editBatch)));
   document.querySelectorAll('[data-delete-batch]').forEach((b) => b.addEventListener('click', () => deleteBatch(b.dataset.deleteBatch)));
-  $('search')?.addEventListener('input', (e) => { productPage = 1; localStorage.setItem('vpa-product-page', productPage); localStorage.setItem('vpa-product-search', e.target.value); render(); });
+  $('search')?.addEventListener('input', (e) => { const value = e.currentTarget.value; productPage = 1; localStorage.setItem('vpa-product-page', productPage); localStorage.setItem('vpa-product-search', value); refreshProductsSearchResults(value); requestAnimationFrame(() => { const input = $('search'); if (input && document.activeElement !== input) { input.focus({ preventScroll: true }); try { input.setSelectionRange(value.length, value.length); } catch {} } }); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));
   document.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => { const p = data.products.find((x) => x.id === b.dataset.productId); if (p) { p.status = b.dataset.status; await save(); render(); } });
@@ -2610,10 +2610,12 @@ function bind() {
   document.querySelectorAll('[data-pending-filter]').forEach((b) => b.onclick = () => { pendingFilter = b.dataset.pendingFilter; localStorage.setItem('vpa-pending-filter', pendingFilter); selectedProducts.clear(); render(); });
   document.querySelectorAll('[data-select-product]').forEach((b) => b.onchange = () => { if (b.checked) selectedProducts.add(b.dataset.selectProduct); else selectedProducts.delete(b.dataset.selectProduct); });
 }
-function refreshProductsSearchResults() {
+function refreshProductsSearchResults(searchValueOverride = null) {
   const listEl = $('productList');
   if (!listEl) return;
-  const searchValue = localStorage.getItem('vpa-product-search') || '';
+  const searchValue = searchValueOverride !== null
+    ? String(searchValueOverride)
+    : ($('search')?.value ?? localStorage.getItem('vpa-product-search') ?? '');
   const q = searchValue.trim().toLowerCase();
   const allVisible = visibleProducts();
   let list = allVisible.filter((p) => productFilter === 'fefo' ? Boolean(p.fefo) : productFilter === 'promotor' ? Boolean(p.promotor) : !p.fefo && !p.promotor);
@@ -2625,9 +2627,44 @@ function refreshProductsSearchResults() {
   if (q) {
     list = list.filter((p) => `${p.name || ''} ${p.ean || ''} ${p.company || ''}`.toLowerCase().includes(q));
   }
-  listEl.innerHTML = groupedProductRows(list, {selectable: true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>';
+
+  // A pesquisa deve atualizar somente a lista. Recriar #view a cada caractere
+  // fazia o input #search ser destruído e recriado, fechando o teclado do Android.
+  const totalProductPages = Math.max(1, Math.ceil(list.length / 20));
+  productPage = Math.min(Math.max(1, productPage), totalProductPages);
+  const productStart = (productPage - 1) * 20;
+  const pageList = list.slice(productStart, productStart + 20);
+  listEl.innerHTML = groupedProductRows(pageList, {selectable: true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>';
+
   const count = document.querySelector('.product-count');
   if (count) count.textContent = `${list.length} produto${list.length === 1 ? '' : 's'}`;
+
+  // Atualiza a paginação sem recriar a página inteira.
+  let paginationEl = listEl.nextElementSibling;
+  if (paginationEl && paginationEl.classList.contains('product-pagination')) {
+    if (totalProductPages <= 1) {
+      paginationEl.remove();
+      paginationEl = null;
+    }
+  } else if (totalProductPages > 1) {
+    paginationEl = document.createElement('div');
+    paginationEl.className = 'critical-pagination product-pagination';
+    listEl.insertAdjacentElement('afterend', paginationEl);
+  }
+  if (paginationEl) {
+    paginationEl.innerHTML = `<button type="button" class="secondary" id="productPrev" ${productPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${productPage}</strong> de ${totalProductPages} · ${list.length} produtos</span><button type="button" class="secondary" id="productNext" ${productPage >= totalProductPages ? 'disabled' : ''}>Próxima</button>`;
+    $('productPrev')?.addEventListener('click', () => {
+      productPage = Math.max(1, productPage - 1);
+      localStorage.setItem('vpa-product-page', productPage);
+      refreshProductsSearchResults();
+    });
+    $('productNext')?.addEventListener('click', () => {
+      productPage = Math.min(totalProductPages, productPage + 1);
+      localStorage.setItem('vpa-product-page', productPage);
+      refreshProductsSearchResults();
+    });
+  }
+
   document.querySelectorAll('[data-select-product]').forEach((b) => {
     b.onchange = () => {
       if (b.checked) selectedProducts.add(b.dataset.selectProduct);
