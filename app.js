@@ -139,11 +139,16 @@ function seed() {
   data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
 }
 function syncCorridorLastChecksFromBatches() {
+  // O histórico é a fonte da verdade: ao editar/excluir uma batida,
+  // a última conferência do corredor precisa ser recalculada do zero.
   const finalized = data.batches.filter((b) => b.status === 'finalizada' && b.corridorId && b.date);
   data.corridors.forEach((c) => {
-    const dates = finalized.filter((b) => b.corridorId === c.id).map((b) => b.date).filter(Boolean).sort();
-    const latest = dates[dates.length - 1];
-    if (latest && (!c.lastCheck || latest > c.lastCheck)) c.lastCheck = latest;
+    const dates = finalized
+      .filter((b) => b.corridorId === c.id)
+      .map((b) => String(b.date || '').slice(0, 10))
+      .filter(Boolean)
+      .sort();
+    c.lastCheck = dates.length ? dates[dates.length - 1] : null;
   });
 }
 function dateOnlyDiff(fromDate, toDate = today()) {
@@ -314,12 +319,12 @@ function corridorHistoryRows() {
 function batchHistoryRows() {
   return data.batches.slice().filter((b) => b.status === 'finalizada').sort((a,b) => {
     const ad = daysToDateValue(a.date); const bd = daysToDateValue(b.date);
-    return ad - bd || String(a.date || '').localeCompare(String(b.date || ''));
+    return ad - bd || String(b.date || '').localeCompare(String(a.date || ''));
   }).map((b) => {
     const days = daysToDateValue(b.date);
     const c = data.corridors.find((x) => x.id === b.corridorId);
-    const alert = corridorAlert(c || { lastCheck: b.date });
-    return `<div class="product-row"><div><div class="product-name">${esc(b.corridorName || c?.name || 'Corredor')}</div><div class="meta">Data: ${fmt(b.date)} · ${days} dia${days === 1 ? '' : 's'} desde a batida</div><div class="meta">${data.products.filter((p) => p.batchId === b.id).length} produtos registrados</div></div><span class="badge">Concluída</span></div>`;
+    const retroTag = b.retroativa ? '<span class="tag-chip">RETROATIVA</span>' : '';
+    return `<div class="product-row batch-history-row"><div><div class="product-name">${esc(b.corridorName || c?.name || 'Corredor')} ${retroTag}</div><div class="meta">Data: ${fmt(b.date)} · ${days} dia${days === 1 ? '' : 's'} desde a batida</div><div class="meta">${data.products.filter((p) => p.batchId === b.id).length} produtos registrados</div></div><div class="row-actions"><span class="badge">Concluída</span><button class="secondary compact-action" type="button" data-edit-batch="${esc(b.id)}">Editar</button><button class="danger compact-action" type="button" data-delete-batch="${esc(b.id)}">Excluir</button></div></div>`;
   }).join('');
 }
 function daysToDateValue(date) {
@@ -609,7 +614,16 @@ function notifyProductEvent(payload) {
   mergeCloudProductEvent(payload);
   if (eventType !== 'INSERT' || !canReceiveTeamProductNotifications()) return;
   const actorId = row.registered_by || null;
-  if (actorId && teamRealtimeUserId && String(actorId) === String(teamRealtimeUserId)) return;
+  if (actorId && teamRealtimeUserId && String(actorId) === String(teamRealtimeUserId)) {
+    const name = row.name || 'Novo produto';
+    const key = 'new-product:' + row.id;
+    if (!notificationWasShown(key)) {
+      markNotificationShown(key);
+      const message = `Novo produto cadastrado: ${name}${row.ean ? ` · EAN ${row.ean}` : ''}.`;
+      window.VPASupabase?.invokePushNotification?.({ type: 'product_created', product_id: row.id, actor_id: actorId }).catch((error) => console.warn('[VPA] Push remoto de novo produto:', error));
+    }
+    return;
+  }
   const name = row.name || 'Novo produto';
   const key = 'new-product:' + row.id;
   if (notificationWasShown(key)) return;
@@ -986,6 +1000,40 @@ async function testAndroidNotification() {
   }
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+async function ensureWebPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('Este navegador não oferece Web Push.');
+  if (!('Notification' in window) || Notification.permission !== 'granted') throw new Error('Permissão de notificações ainda não foi autorizada.');
+  const publicKey = await window.VPASupabase?.getPushPublicKey?.();
+  if (!publicKey) throw new Error('Chave pública Web Push ainda não configurada no Supabase.');
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+  }
+  await window.VPASupabase?.savePushSubscription?.(subscription, navigator.userAgent);
+  localStorage.setItem('vpa-webpush-active', '1');
+  return subscription;
+}
+
+async function activateWebPushAfterPermission() {
+  try {
+    await ensureWebPushSubscription();
+    showTeamToast('Notificações fora do aplicativo ativadas neste aparelho.', 'success');
+    return true;
+  } catch (error) {
+    console.warn('[VPA] Web Push não foi ativado:', error);
+    showTeamToast('Notificações locais autorizadas. Para receber avisos com o app fechado, finalize a configuração do Web Push.', 'warning');
+    return false;
+  }
+}
+
 async function requestTeamNotifications() {
   if (!('Notification' in window)) { showTeamToast('Este navegador não oferece notificações.', 'warning'); return; }
   if (Notification.permission === 'denied') {
@@ -994,7 +1042,8 @@ async function requestTeamNotifications() {
     return;
   }
   const permission = await Notification.requestPermission();
-  showTeamToast(permission === 'granted' ? 'Notificações da equipe ativadas neste aparelho.' : 'As notificações não foram autorizadas. Verifique a permissão do site no navegador.', permission === 'granted' ? 'success' : 'warning');
+  if (permission === 'granted') await activateWebPushAfterPermission();
+  else showTeamToast('As notificações não foram autorizadas. Verifique a permissão do site no navegador.', 'warning');
   render();
 }
 
@@ -1009,7 +1058,8 @@ async function autoActivateTeamAfterLogin(session) {
   // A permissão é específica por navegador/perfil. Se já foi concedida,
   // não é necessário pedir novamente a cada login.
   if (!('Notification' in window)) return;
-  if (Notification.permission === 'granted' || Notification.permission === 'denied') return;
+  if (Notification.permission === 'granted') { await activateWebPushAfterPermission().catch(() => {}); return; }
+  if (Notification.permission === 'denied') return;
   if (teamAutoNotificationAttempted) return;
 
   const alreadyPrompted = localStorage.getItem('vpa-team-notification-prompted') === '1';
@@ -1322,7 +1372,7 @@ function settings() {
   if (!admin) return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Seu perfil permite apenas ajustes pessoais e atualização do aplicativo.</p></div></div>${personal}`;
   return `<div class="section-head"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Controle geral do sistema, usuários, sincronização e preferências.</p></div></div>${personal}
   <div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração é aplicada no perfil do Supabase.</p><div id="adminTeamList" class="team-admin-list"><div class="empty">Carregando usuários...</div></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">Autorizar notificações</button><button class="secondary" id="testAndroidNotification"> Testar barra Android</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">${teamRealtimeActive ? ' Equipe conectada' : ' Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Armazenamento local</div><p class="panel-sub">Seus registros ficam neste navegador. Faça backups regularmente.</p><div class="toolbar"><button class="primary" id="backupBtn">⇩ Exportar backup</button><button class="secondary" id="restoreBtn">⇧ Restaurar backup</button></div></div><div class="panel compact-notification-panel" style="margin-top:14px"><div class="product-name">Notificações <span class="tag-chip">V17</span></div><p class="panel-sub">A conexão da equipe é iniciada automaticamente após o login. Notificações em segundo plano exigem permissão e Web Push ativo neste aparelho.</p><div class="toolbar"><button class="primary" id="enableTeamNotifications">Autorizar notificações</button><button class="secondary" id="testAndroidNotification">Testar barra Android</button><button class="secondary" id="activateWebPush">Ativar notificações fora do app</button></div><p class="panel-sub" id="teamNotificationStatus">${teamNotificationPermissionLabel()}</p><p class="panel-sub">Push Web: ${localStorage.getItem("vpa-webpush-active") === "1" ? "inscrito neste aparelho" : "ainda não inscrito"}.</p><p class="panel-sub">${teamRealtimeActive ? ' Equipe conectada' : ' Conexão aguardando'} · ${teamNotificationCount} aviso(s) nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Sincronização com Supabase</div><p class="panel-sub">Envia os produtos e batidas locais para a nuvem.</p><div class="toolbar"><button class="primary" id="syncProductsBtn">☁ Sincronizar produtos</button><button class="secondary" id="syncBatchesBtn">☁ Sincronizar batidas</button></div><p class="panel-sub" id="syncProductsStatus" aria-live="polite">Nenhuma sincronização executada nesta sessão.</p><p class="panel-sub" id="syncBatchesStatus" aria-live="polite">Nenhuma sincronização de batidas executada nesta sessão.</p></div><div class="panel" style="margin-top:14px"><div class="product-name">Estrutura compartilhada</div><p class="panel-sub">${data.corridors.length} corredores cadastrados · ${data.products.length} produtos · ${data.batches.length} batidas.</p><div class="toolbar"><button class="secondary" id="corridorsBtn">Ver corredores</button><button class="secondary" id="manageCorridorsBtn">Editar corredores e sessões</button></div></div>`;
 }
 function floatingItems() {
   const main = [
@@ -1464,17 +1514,58 @@ async function registerRetroBatch(event) {
   if (!corridor || !date) return;
   const batch = { id: uid(), corridorId: corridor.id, corridorName: corridor.name, date, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), status: 'finalizada', productCount: 0, retroativa: true, syncPending: true };
   data.batches.push(batch);
-  const c = data.corridors.find((x) => x.id === corridor.id);
-  if (c) {
-    const previous = c.lastCheck;
-    if (!previous || date > previous) c.lastCheck = date;
-  }
+  syncCorridorLastChecksFromBatches();
   await save();
   window.VPASupabase?.syncBatches?.([batch], data.corridors).then((result) => { if (result?.synced) { batch.syncPending = false; return save(); } }).catch((error) => console.warn('[VPA] Sincronização da batida retroativa falhou:', error.message || error));
   $('retroBatchDialog').close();
   showTeamToast(`Batida registrada em ${fmt(date)} para ${corridor.name}.`, 'success');
   batchTab = 'history';
   render();
+}
+async function editBatch(batchId) {
+  const batch = data.batches.find((b) => b.id === batchId && b.status === 'finalizada');
+  if (!batch) return;
+  const corridor = data.corridors.find((c) => c.id === batch.corridorId);
+  const nextCorridorId = window.prompt('Número do corredor para esta batida:', String(corridor?.number || ''));
+  if (nextCorridorId === null) return;
+  const nextCorridor = data.corridors.find((c) => String(c.number) === String(nextCorridorId).trim() || c.id === String(nextCorridorId).trim());
+  if (!nextCorridor) { alert('Corredor não encontrado.'); return; }
+  const nextDate = window.prompt('Data real da batida (AAAA-MM-DD):', String(batch.date || today()).slice(0, 10));
+  if (nextDate === null) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || Number.isNaN(new Date(`${nextDate}T12:00:00`).getTime())) { alert('Data inválida. Use AAAA-MM-DD.'); return; }
+  batch.corridorId = nextCorridor.id;
+  batch.corridorName = nextCorridor.name;
+  batch.date = nextDate;
+  batch.retroativa = true;
+  batch.syncPending = true;
+  syncCorridorLastChecksFromBatches();
+  await save();
+  try {
+    if (window.VPASupabase?.syncBatches) {
+      const result = await window.VPASupabase.syncBatches([batch], data.corridors);
+      if (result?.synced) { batch.syncPending = false; await save(); }
+    }
+  } catch (error) { console.warn('[VPA] Não foi possível sincronizar a edição da batida:', error.message || error); }
+  showTeamToast('Registro da batida atualizado.', 'success');
+  render();
+}
+async function deleteBatch(batchId) {
+  const batch = data.batches.find((b) => b.id === batchId && b.status === 'finalizada');
+  if (!batch) return;
+  const count = data.products.filter((p) => p.batchId === batch.id).length;
+  const ok = await askConfirm('Excluir registro da batida?', `${batch.corridorName || 'Corredor'} · ${fmt(batch.date)}. O registro sairá do histórico e a sugestão de corredor será recalculada.${count ? ` Os ${count} produtos já registrados permanecerão no catálogo.` : ''}`);
+  if (!ok) return;
+  try {
+    if (window.VPASupabase?.deleteBatch) await window.VPASupabase.deleteBatch(batch.id);
+    data.batches = data.batches.filter((b) => b.id !== batch.id);
+    syncCorridorLastChecksFromBatches();
+    await save();
+    showTeamToast('Registro da batida excluído.', 'success');
+    render();
+  } catch (error) {
+    console.error('[VPA] Exclusão da batida:', error);
+    showTeamToast('Não foi possível excluir a batida da nuvem. O registro foi mantido.', 'warning');
+  }
 }
 async function startBatch(event) {
   if (event) event.preventDefault();
@@ -2323,6 +2414,7 @@ function bind() {
   if (isAdministrator()) loadAdminTeamMembers();
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);
+  $('activateWebPush')?.addEventListener('click', activateWebPushAfterPermission);
   $('reloadTeamBatches')?.addEventListener('click', async () => { await mergeCloudBatidas(false); await mergeCloudTemporaryBatchItems(); showTeamToast('Batidas da equipe atualizadas.', 'success'); });
   $('syncProductsBtn')?.addEventListener('click', syncLocalProductsToCloud);
   $('syncBatchesBtn')?.addEventListener('click', syncLocalBatchesToCloud);
@@ -2393,6 +2485,8 @@ function bind() {
   $('closeRetroBatchDialog')?.addEventListener('click', () => $('retroBatchDialog').close());
   $('cancelRetroBatch')?.addEventListener('click', () => $('retroBatchDialog').close());
   $('retroBatchForm')?.addEventListener('submit', registerRetroBatch);
+  document.querySelectorAll('[data-edit-batch]').forEach((b) => b.addEventListener('click', () => editBatch(b.dataset.editBatch)));
+  document.querySelectorAll('[data-delete-batch]').forEach((b) => b.addEventListener('click', () => deleteBatch(b.dataset.deleteBatch)));
   $('search')?.addEventListener('input', (e) => { productPage = 1; localStorage.setItem('vpa-product-page', productPage); localStorage.setItem('vpa-product-search', e.target.value); render(); });
   document.querySelectorAll('.filter').forEach((b) => b.onclick = () => filterProducts($('search')?.value || '', b.dataset.filter));
   document.querySelectorAll('[data-edit-product]').forEach((b) => b.onclick = () => openProduct(b.dataset.editProduct));

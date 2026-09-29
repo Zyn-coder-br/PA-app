@@ -557,6 +557,17 @@
     return results;
   }
 
+  async function deleteBatch(batchId) {
+    const client = await init();
+    if (!batchId) throw new Error('ID da batida não informado.');
+    // Mantemos o registro fora do histórico por meio de status cancelada,
+    // evitando quebrar referências de produtos que já foram vinculados à batida.
+    const result = await client.from('batidas').update({ status: 'cancelled' }).eq('id', batchId).select('id, status').maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error('Batida não encontrada ou sem permissão para alterar.');
+    return result.data;
+  }
+
   async function listProducts() {
     const client = await init();
     const result = await client
@@ -752,6 +763,49 @@
     return result.data;
   }
 
+  async function getPushPublicKey() {
+    const client = await init();
+    const result = await client.from('vpa_push_settings').select('vapid_public_key').eq('id', 1).maybeSingle();
+    if (result.error) throw result.error;
+    return result.data?.vapid_public_key || '';
+  }
+
+  async function savePushSubscription(subscription, userAgent) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id || !subscription) throw new Error('Sessão ou inscrição de notificações inválida.');
+    const json = subscription.toJSON ? subscription.toJSON() : subscription;
+    const keys = json?.keys || {};
+    const payload = {
+      user_id: session.user.id,
+      endpoint: json?.endpoint || '',
+      p256dh: keys.p256dh || '',
+      auth: keys.auth || '',
+      user_agent: userAgent || navigator.userAgent || '',
+      active: true,
+      updated_at: new Date().toISOString()
+    };
+    if (!payload.endpoint || !payload.p256dh || !payload.auth) throw new Error('Inscrição Web Push incompleta.');
+    const result = await client.from('vpa_push_subscriptions').upsert(payload, { onConflict: 'endpoint' }).select().single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  async function removePushSubscription(endpoint) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id || !endpoint) return;
+    const result = await client.from('vpa_push_subscriptions').update({ active: false, updated_at: new Date().toISOString() }).eq('user_id', session.user.id).eq('endpoint', endpoint);
+    if (result.error) throw result.error;
+  }
+
+  async function invokePushNotification(payload) {
+    const client = await init();
+    const result = await client.functions.invoke('vpa-push', { body: payload || {} });
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function unsubscribe(channel) {
     const client = await init();
     if (channel) {
@@ -797,6 +851,7 @@
     deleteProducts: deleteProducts,
     syncBatch: syncBatch,
     syncBatches: syncBatches,
+    deleteBatch: deleteBatch,
     listProducts: listProducts,
     listPromotorProducts: listPromotorProducts,
     listRebaixaItems: listRebaixaItems,
@@ -813,6 +868,10 @@
     subscribeRebaixaItems: subscribeRebaixaItems,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
+    getPushPublicKey: getPushPublicKey,
+    savePushSubscription: savePushSubscription,
+    removePushSubscription: removePushSubscription,
+    invokePushNotification: invokePushNotification,
     unsubscribe: unsubscribe,
     getClient: function () { return state.client; }
   };
