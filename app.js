@@ -1983,6 +1983,162 @@ async function importFefoItems() {
   $('fefoScannerDialog').close(); $('productDialog').close(); render();
 }
 
+let pdfFefoItems = [];
+function openPdfFefoImport() {
+  pdfFefoItems = [];
+  $('pdfFefoInput').value = '';
+  $('pdfFefoStatus').textContent = '';
+  $('pdfFefoResults').innerHTML = '<div class="empty">Selecione um PDF para visualizar os produtos.</div>';
+  $('confirmPdfFefo').disabled = true;
+  $('pdfFefoDialog').showModal();
+}
+function normalizePdfOcrText(text) {
+  return String(text || '')
+    .replace(/[|¦]/g, ' ')
+    .replace(/[–—]/g, '-')
+    .replace(/[“”]/g, '"')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function normalizePdfDate(value) {
+  const m = String(value || '').match(/(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{2,4})/);
+  if (!m) return '';
+  const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+  const day = Number(m[1]), month = Number(m[2]), year = Number(y);
+  if (year < 2020 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return '';
+  return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+function parsePdfFefoLine(rawLine) {
+  const line = normalizePdfOcrText(rawLine);
+  if (!line) return null;
+  const dateMatch = line.match(/(\d{1,2}\s*[\/-]\s*\d{1,2}\s*[\/-]\s*\d{2,4})\b/);
+  if (!dateMatch) return null;
+  const expiry = normalizePdfDate(dateMatch[1]);
+  if (!expiry) return null;
+  const beforeDate = line.slice(0, dateMatch.index).trim();
+  const tokens = beforeDate.split(/\s+/).filter(Boolean);
+  if (tokens.length < 5) return null;
+
+  // Estrutura da lista FEFO enviada: Loja | Seção | PLU | Descrição | Estoque | Data.
+  // Se o OCR acertar os três primeiros campos, usamos as posições fixas e ignoramos
+  // seção/loja. O estoque é o último token numérico antes da data.
+  let pluIndex = -1;
+  for (let i = 1; i < Math.min(tokens.length, 5); i += 1) {
+    if (/^\d{4,10}$/.test(tokens[i].replace(/[^0-9]/g,''))) { pluIndex = i; break; }
+  }
+  if (pluIndex < 0) return null;
+  const plu = tokens[pluIndex].replace(/[^0-9]/g, '');
+  let stockIndex = -1;
+  for (let i = tokens.length - 1; i > pluIndex; i -= 1) {
+    if (/^\d+(?:[.,]\d+)?$/.test(tokens[i])) { stockIndex = i; break; }
+  }
+  if (stockIndex <= pluIndex) return null;
+  const quantity = tokens[stockIndex].replace(',', '.');
+  const name = tokens.slice(pluIndex + 1, stockIndex).join(' ').replace(/^[-:;|]+|[-:;|]+$/g, '').trim();
+  if (!name || name.length < 2) return null;
+  return { id: uid(), plu, ean: '', name, quantity, initialDate: '', expiry, selected: true };
+}
+function parsePdfFefoOcrText(text) {
+  const result = [];
+  const seen = new Set();
+  String(text || '').split(/\r?\n/).forEach((line) => {
+    const item = parsePdfFefoLine(line);
+    if (!item) return;
+    const key = `${item.plu}|${item.expiry}|${item.name.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(item);
+  });
+  return result.sort((a,b) => a.expiry.localeCompare(b.expiry) || String(a.name).localeCompare(String(b.name), 'pt-BR'));
+}
+function renderPdfFefoItems() {
+  const valid = pdfFefoItems.filter(x => x.selected);
+  $('pdfFefoResults').innerHTML = pdfFefoItems.length
+    ? `<div class="fefo-ocr-note">${pdfFefoItems.length} produto(s) identificado(s). O sistema está usando somente PLU, descrição, estoque e vencimento. Confira antes de importar.</div>
+      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU</span><span>Descrição</span><span>Estoque</span><span>Vencimento</span></div>
+      ${pdfFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-pdf-fefo-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu || 'N/A')}</span><span>${esc(it.name || 'N/A')}</span><span>${esc(it.quantity || 'N/A')}</span><span>${esc(it.expiry ? fmt(it.expiry) : 'N/A')}</span></label>`).join('')}</div>`
+    : '<div class="empty">Nenhum produto FEFO foi identificado no PDF.</div>';
+  $('confirmPdfFefo').disabled = !valid.length;
+  document.querySelectorAll('[data-pdf-fefo-index]').forEach((el) => el.addEventListener('change', () => {
+    pdfFefoItems[Number(el.dataset.pdfFefoIndex)].selected = el.checked;
+    $('confirmPdfFefo').disabled = !pdfFefoItems.some(x => x.selected);
+  }));
+}
+async function renderPdfPageForOcr(page, scale = 2.4) {
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas;
+}
+async function readPdfFefoFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!window.pdfjsLib) { $('pdfFefoStatus').textContent = 'Leitor PDF não carregado. Verifique a internet e tente novamente.'; return; }
+  if (!window.Tesseract) { $('pdfFefoStatus').textContent = 'Leitor OCR não carregado. Verifique a internet e tente novamente.'; return; }
+  $('confirmPdfFefo').disabled = true;
+  $('pdfFefoStatus').textContent = 'Abrindo PDF...';
+  pdfFefoItems = [];
+  try {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const buffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+    const allText = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      $('pdfFefoStatus').textContent = `Preparando página ${pageNumber} de ${pdf.numPages}...`;
+      const page = await pdf.getPage(pageNumber);
+      const canvas = await renderPdfPageForOcr(page, 2.4);
+      const result = await Tesseract.recognize(canvas, 'por+eng', {
+        logger: m => {
+          if (m.status === 'recognizing text') $('pdfFefoStatus').textContent = `Lendo PDF: página ${pageNumber}/${pdf.numPages} · ${Math.round((m.progress || 0) * 100)}%`;
+        }
+      });
+      allText.push(result.data.text || '');
+      canvas.width = 1; canvas.height = 1;
+    }
+    pdfFefoItems = parsePdfFefoOcrText(allText.join('\n'));
+    renderPdfFefoItems();
+    $('pdfFefoStatus').textContent = pdfFefoItems.length ? `${pdfFefoItems.length} produto(s) identificado(s). Nenhum item foi salvo ainda.` : 'Não consegui identificar as linhas da tabela. Tente um PDF com imagem mais nítida ou exportado diretamente do sistema.';
+  } catch (error) {
+    console.error('[VPA] Falha ao ler PDF FEFO:', error);
+    $('pdfFefoStatus').textContent = 'Não foi possível ler o PDF. Confira o arquivo e tente novamente.';
+    pdfFefoItems = [];
+    renderPdfFefoItems();
+  }
+}
+async function confirmPdfFefoImport() {
+  const selected = pdfFefoItems.filter(x => x.selected && x.name && x.expiry);
+  if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
+  const corridorId = data.corridors[0]?.id || '';
+  const corridor = data.corridors.find(c => c.id === corridorId);
+  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:'', plu:it.plu || '', storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity) || 1, initialDate:it.initialDate || '', status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'pdf-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const imported = [];
+  const seen = new Set();
+  candidates.forEach((product) => { const key = productDuplicateKey(product); if (!key || seen.has(key) || findExistingProduct(product)) return; seen.add(key); imported.push(product); });
+  if (!imported.length) { $('pdfFefoStatus').textContent = 'Nenhum produto novo foi importado. Os duplicados foram ignorados.'; showTeamToast('Nenhum produto novo foi importado. Os duplicados foram ignorados.', 'warning'); $('pdfFefoDialog').close(); render(); return; }
+  imported.forEach(p => data.products.push(p));
+  await save();
+  try {
+    $('pdfFefoStatus').textContent = `Enviando ${imported.length} produto(s) ao banco compartilhado...`;
+    const result = await window.VPASupabase?.syncProducts?.(imported.map(p => ({ ...p, corridorNumber: corridor?.number })));
+    if (result?.syncedIds) {
+      const syncedSet = new Set(result.syncedIds.map(String));
+      imported.forEach(p => { if (syncedSet.has(String(p.id))) p.syncPending = false; });
+      await save();
+    }
+    if (result?.failed) showTeamToast(`PDF FEFO salvo localmente, mas ${result.failed} item(ns) não foram enviados ao Supabase.`, 'warning');
+    else if (result?.synced) showTeamToast(`${result.synced} produto(s) FEFO importado(s) do PDF.`, 'success');
+    else showTeamToast(`${imported.length} produto(s) FEFO importado(s) localmente.`, 'success');
+  } catch (error) {
+    console.warn('[VPA] Sincronização do PDF FEFO falhou:', error.message || error);
+    showTeamToast('PDF FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
+  }
+  $('pdfFefoDialog').close(); render();
+}
+
 let excelFefoItems = [];
 function openExcelFefoImport() {
   excelFefoItems = [];
@@ -2490,6 +2646,11 @@ function bind() {
   $('confirmPiqueBtn')?.addEventListener('click', confirmPique);
   $('openFefoScanner')?.addEventListener('click', openFefoScanner);
   $('openExcelFefoImport')?.addEventListener('click', openExcelFefoImport);
+  $('openPdfFefoImport')?.addEventListener('click', openPdfFefoImport);
+  $('closePdfFefo')?.addEventListener('click', () => $('pdfFefoDialog').close());
+  $('cancelPdfFefo')?.addEventListener('click', () => $('pdfFefoDialog').close());
+  $('pdfFefoInput')?.addEventListener('change', readPdfFefoFile);
+  $('confirmPdfFefo')?.addEventListener('click', confirmPdfFefoImport);
   $('closeExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
   $('cancelExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
   $('excelFefoInput')?.addEventListener('change', readExcelFefoFile);
