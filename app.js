@@ -677,6 +677,12 @@ function notifyProductEvent(payload) {
   const eventType = String(payload?.eventType || payload?.event || 'UPDATE').toUpperCase();
   const row = eventType === 'DELETE' ? (payload?.old || payload?.record || {}) : (payload?.new || payload?.record || {});
   if (!row.id) return;
+  // Importações FEFO são operações em massa. Cada produto chega pelo
+  // realtime como INSERT, mas não devemos gerar uma notificação por item.
+  // A própria rotina de importação mostra uma única notificação-resumo.
+  const rowMeta = row.app_metadata && typeof row.app_metadata === 'object' ? row.app_metadata : {};
+  const fefoBulkImport = ['pdf-fefo', 'planilha-fefo', 'lista-fefo'].includes(String(rowMeta.origemCadastro || '').toLowerCase());
+  if (fefoBulkImport) return;
   const eventFingerprint = [eventType, row.id, row.updated_at || row.created_at || '', row.status || '', row.name || ''].join('|');
   const now = Date.now();
   for (const [key, time] of recentProductEvents.entries()) if (now - time > 15000) recentProductEvents.delete(key);
@@ -1980,6 +1986,7 @@ async function importFefoItems() {
     console.warn('[VPA] Sincronização automática do FEFO falhou:', error.message || error);
     showTeamToast('FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
+  await showFefoImportSummaryNotification(imported.length);
   $('fefoScannerDialog').close(); $('productDialog').close(); render();
 }
 
@@ -2109,6 +2116,15 @@ async function readPdfFefoFile(event) {
     renderPdfFefoItems();
   }
 }
+async function showFefoImportSummaryNotification(count) {
+  const total = Math.max(0, Number(count) || 0);
+  if (!total) return;
+  const body = `Nova lista FEFO · ${total} produto${total === 1 ? '' : 's'} adicionado${total === 1 ? '' : 's'}.`;
+  const tag = `vpa-fefo-import-${new Date().toISOString().slice(0, 10)}-${Date.now()}`;
+  showTeamToast(body, 'team');
+  await showRealtimeNotification('Vencimento PA · Lista FEFO', body, tag);
+}
+
 async function confirmPdfFefoImport() {
   const selected = pdfFefoItems.filter(x => x.selected && x.name && x.expiry);
   if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
@@ -2136,6 +2152,7 @@ async function confirmPdfFefoImport() {
     console.warn('[VPA] Sincronização do PDF FEFO falhou:', error.message || error);
     showTeamToast('PDF FEFO salvo localmente, mas não foi enviado ao banco compartilhado.', 'warning');
   }
+  await showFefoImportSummaryNotification(imported.length);
   $('pdfFefoDialog').close(); render();
 }
 
@@ -2286,6 +2303,7 @@ async function confirmExcelFefoImport() {
     $('excelFefoStatus').textContent = 'Falha na sincronização: os produtos permanecem salvos localmente.';
     showTeamToast('Produtos salvos localmente, mas não enviados ao Supabase.', 'warning');
   }
+  await showFefoImportSummaryNotification(imported.length);
   $('excelFefoDialog').close();
   render();
 }
