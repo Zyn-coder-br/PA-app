@@ -1,5 +1,5 @@
 {
-  "version": "V61",
-  "name": "Remoção automática da etiqueta PLU ao alterar vencimento",
+  "version": "V62",
+  "name": "Edição simplificada e remoção da data inicial",
   "updatedAt": "2026-10-11"
 }

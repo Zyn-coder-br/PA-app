@@ -228,7 +228,6 @@
         piqueTipo: product.piqueTipo || null,
         batchId: product.batchId || null,
         createdAt: product.createdAt || null,
-        initialDate: product.initialDate || null,
         origemCadastro: product.origemCadastro || null,
         categoriaCadastro: product.categoriaCadastro || null,
         tag: product.tag || ''
@@ -293,7 +292,6 @@
         piqueTipo: product.piqueTipo || null,
         batchId: product.batchId || null,
         createdAt: product.createdAt || null,
-        initialDate: product.initialDate || null,
         origemCadastro: product.origemCadastro || 'batida',
         categoriaCadastro: product.categoriaCadastro || 'general',
         tag: product.tag || ''
@@ -407,7 +405,6 @@
           piqueTipo: product.piqueTipo || null,
           batchId: product.batchId || null,
           createdAt: product.createdAt || null,
-          initialDate: product.initialDate || null,
           origemCadastro: product.origemCadastro || null,
           categoriaCadastro: product.categoriaCadastro || null,
           tag: product.tag || '',

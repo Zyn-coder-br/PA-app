@@ -218,8 +218,8 @@ function seed() {
   data.rebaixaItems ||= [];
   data.criticalItems ||= [];
   data.rebaixaItems = data.rebaixaItems.map((item) => ({ ...item, id: item.id || uid(), loja: item.loja || '', plu: item.plu || '', name: item.name || '', quantity: item.quantity ?? '', expiry: item.expiry || '', value: item.value ?? '' }));
-  data.criticalItems = data.criticalItems.map((item) => ({ ...item, id: item.id || uid(), ean: String(item.ean || '').trim(), plu: String(item.plu || '').trim(), name: String(item.name || '').trim(), initialDate: normalizeExcelDate(item.initialDate || item.dataInicial || item.dataEntrada || ''), quantity: 0, expiry: normalizeExcelDate(item.expiry || item.validade || item.dataVencimento || '') }));
-  data.products = data.products.map((p) => ({ ...p, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, initialDate: normalizeExcelDate(p.initialDate || p.dataInicial || p.dataEntrada || ''), isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }));
+  data.criticalItems = data.criticalItems.map((item) => { const { initialDate, dataInicial, dataEntrada, ...rest } = item; return { ...rest, id: item.id || uid(), ean: String(item.ean || '').trim(), plu: String(item.plu || '').trim(), name: String(item.name || '').trim(), quantity: 0, expiry: normalizeExcelDate(item.expiry || item.validade || item.dataVencimento || '') }; });
+  data.products = data.products.map((p) => { const { initialDate, dataInicial, dataEntrada, ...rest } = p; return { ...rest, promotor: Boolean(p.promotor), status: ['corredor', 'vencimento', 'separado', 'resolvido'].includes(p.status) ? p.status : 'corredor', tag: p.tag || '', fefo: Boolean(p.fefo), piqueConcluido: Boolean(p.piqueConcluido), piquePhoto: p.piquePhoto || '', piqueAt: p.piqueAt || null, createdAt: p.createdAt || p.registeredAt || null, isTemporaryBatchItem: Boolean(p.isTemporaryBatchItem) }; });
 }
 function syncCorridorLastChecksFromBatches() {
   // O histórico é a fonte da verdade: ao editar/excluir uma batida,
@@ -346,8 +346,7 @@ function productRow(p, options = {}) {
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '';
   const code = p.ean || p.plu || 'Código não informado';
   const place = externalPromotor ? `Empresa: ${esc(p.company || 'Não informada')} · ${esc(p.location || 'Local não informado')}` : `${esc(c?.name || 'Sem corredor')} · Código: ${esc(code)}`;
-  const initialMeta = p.initialDate ? `<div class="meta">Data inicial: ${esc(fmt(p.initialDate))}</div>` : '';
-  return `<div class="product-row ${externalPromotor ? 'external-promotor-row' : ''}"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}${externalPromotor ? ' <span class="tag-chip">PROMOTOR</span>' : ''}</div><div class="meta">${place}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div>${initialMeta}</div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
+  return `<div class="product-row ${externalPromotor ? 'external-promotor-row' : ''}"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}${externalPromotor ? ' <span class="tag-chip">PROMOTOR</span>' : ''}</div><div class="meta">${place}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div></div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
 }
 function suggestedCorridor() {
   return data.corridors.slice().sort((a, b) => {
@@ -729,7 +728,6 @@ function localProductFromCloud(row) {
     quantitySeparated: Number(row.quantity_separated || 0),
     status: statusMap[row.status] || 'corredor',
     createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
-    initialDate: meta.initialDate || '',
     updatedAt: row.updated_at || null,
     batchId: meta.batchId || null,
     origemCadastro: meta.origemCadastro || null,
@@ -759,7 +757,6 @@ function localProductFromTemporary(row) {
     quantitySeparated: Number(row.quantity_separated || 0),
     status: statusMap[row.status] || 'corredor',
     createdAt: meta.createdAt || row.created_at || new Date().toISOString(),
-    initialDate: meta.initialDate || '',
     updatedAt: row.updated_at || null,
     batchId: row.batch_id || meta.batchId || null,
     origemCadastro: meta.origemCadastro || 'batida',
@@ -1539,13 +1536,16 @@ function openProduct(productId = null, forceManual = false) {
   pendingProductPhotoFile = null;
   productPhotoProcessing = false;
   const p = data.products.find((x) => x.id === productId);
+  // Importações são ferramentas de cadastro; não aparecem ao editar um produto existente.
+  ['openFefoScanner', 'openExcelFefoImport', 'openPdfFefoImport'].forEach((id) => { const button = $(id); if (button) { button.hidden = Boolean(p); button.style.display = p ? 'none' : ''; } });
+  const productTitle = $('productDialog')?.querySelector('.dialog-head h2');
+  if (productTitle) productTitle.textContent = p ? 'Editar produto' : 'Novo produto';
   const currentBatch = activeBatch();
   const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
   $('corridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $('productForm').reset();
   $('productId').value = p?.id || '';
   $('productBatchId').value = batch?.id || '';
-  $('initialDate').value = p?.initialDate || '';
   $('expiry').value = p?.expiry || today();
   $('quantity').value = p?.quantity || 1;
   $('name').value = p?.name || '';
@@ -2044,7 +2044,7 @@ function parsePdfFefoLine(rawLine) {
   const quantity = tokens[stockIndex].replace(',', '.');
   const name = tokens.slice(pluIndex + 1, stockIndex).join(' ').replace(/^[-:;|]+|[-:;|]+$/g, '').trim();
   if (!name || name.length < 2) return null;
-  return { id: uid(), plu, ean: '', name, quantity, initialDate: '', expiry, selected: true };
+  return { id: uid(), plu, ean: '', name, quantity, expiry, selected: true };
 }
 function parsePdfFefoOcrText(text) {
   const result = [];
@@ -2184,7 +2184,7 @@ async function confirmPdfFefoImport() {
   if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
   const corridorId = data.corridors[0]?.id || '';
   const corridor = data.corridors.find(c => c.id === corridorId);
-  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:'', plu:it.plu || '', storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity) || 1, initialDate:it.initialDate || '', status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'pdf-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:'', plu:it.plu || '', storeNumber:'', corridorId, expiry:it.expiry, quantity:Number(it.quantity) || 1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'pdf-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
   const imported = [];
   const seen = new Set();
   candidates.forEach((product) => { const key = productDuplicateKey(product); if (!key || seen.has(key) || findExistingProduct(product)) return; seen.add(key); imported.push(product); });
@@ -2258,7 +2258,6 @@ function excelRowsFromSheet(sheet) {
   const known = [
     'PLU', 'EAN', 'GTIN', 'CODIGO DE BARRAS', 'CODIGO',
     'DESCRICAO', 'DESCRICAO DO PRODUTO', 'PRODUTO', 'NOME',
-    'DATA INICIAL', 'DATA DE ENTRADA', 'DATA ENTRADA',
     'DATA VENCIMENTO', 'DATA DE VENCIMENTO', 'VENCIMENTO', 'VALIDADE'
   ].map(normalizeExcelHeader);
   let headerIndex = 0;
@@ -2281,16 +2280,15 @@ function excelMainFields(row) {
   const plu = excelText(excelField(row, ['PLU', 'PLU PRODUTO', 'CODIGO PLU', 'CÓDIGO PLU']));
   const ean = excelText(excelField(row, ['EAN', 'EAN13', 'GTIN', 'GTIN EAN', 'CODIGO DE BARRAS', 'CÓDIGO DE BARRAS', 'CODIGO BARRAS', 'CÓDIGO BARRAS', 'BARRAS', 'CODIGO DO PRODUTO', 'CÓDIGO DO PRODUTO', 'CODIGO PRODUTO', 'CÓDIGO PRODUTO', 'CODIGO']));
   const name = excelText(excelField(row, ['DESCRICAO', 'DESCRIÇÃO', 'DESCRICAO DO PRODUTO', 'DESCRIÇÃO DO PRODUTO', 'PRODUTO', 'NOME', 'NOME DO PRODUTO']));
-  const initialDate = normalizeExcelDate(excelField(row, ['DATA INICIAL', 'DATA DE INICIO', 'DATA DE INÍCIO', 'DATA INICIAL DO PRODUTO', 'DATA DE ENTRADA', 'DATA ENTRADA', 'INICIO', 'INÍCIO', 'ENTRADA']));
   const expiry = normalizeExcelDate(excelField(row, ['DATA VENCIMENTO', 'DATA DE VENCIMENTO', 'VENCIMENTO', 'VALIDADE', 'DATA VALIDADE', 'DATA DE VALIDADE', 'DATA CRITICA', 'DATA CRÍTICA']));
-  return { plu, ean, name, initialDate, expiry };
+  return { plu, ean, name, expiry };
 }
 function renderExcelFefoItems() {
   const valid = excelFefoItems.filter(x => x.selected);
   $('excelFefoResults').innerHTML = excelFefoItems.length
     ? `<div class="fefo-ocr-note">${excelFefoItems.length} produto(s) encontrado(s). Confira os dados e desmarque o que não deseja importar.</div>
-      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Data inicial</span><span>Vencimento</span></div>
-      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu || it.ean || 'N/A')}</span><span>${esc(it.name || 'N/A')}</span><span>${esc(it.initialDate ? fmt(it.initialDate) : 'N/A')}</span><span>${esc(it.expiry ? fmt(it.expiry) : 'N/A')}</span></label>`).join('')}</div>`
+      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Vencimento</span></div>
+      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu || it.ean || 'N/A')}</span><span>${esc(it.name || 'N/A')}</span><span>${esc(it.expiry ? fmt(it.expiry) : 'N/A')}</span></label>`).join('')}</div>`
     : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmExcelFefo').disabled = !valid.length;
   document.querySelectorAll('[data-excel-index]').forEach(el => el.addEventListener('change', () => {
@@ -2313,7 +2311,7 @@ async function readExcelFefoFile(event) {
       const main = excelMainFields(row);
       // Campos extras da planilha são deliberadamente ignorados no produto:
       // Ativa, Usuário, PLU Digital, PLU Rebaixa, Valor etc. não poluem o cadastro.
-      return { id:uid(), ean:main.ean, plu:main.plu, name:main.name, initialDate:main.initialDate, expiry:main.expiry, selected:Boolean(main.name && main.expiry), row:index+2 };
+      return { id:uid(), ean:main.ean, plu:main.plu, name:main.name, expiry:main.expiry, selected:Boolean(main.name && main.expiry), row:index+2 };
     }).filter(x => x.name && x.expiry);
     renderExcelFefoItems();
     $('excelFefoStatus').textContent = `${excelFefoItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
@@ -2329,7 +2327,7 @@ async function confirmExcelFefoImport() {
   if (!selected.length) { alert('Selecione pelo menos um produto.'); return; }
   const corridorId = data.corridors[0]?.id || '';
   const corridor = data.corridors.find(c => c.id === corridorId);
-  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:it.ean || '', plu:it.plu, storeNumber:'', corridorId, expiry:it.expiry, quantity:1, initialDate:it.initialDate || '', status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'planilha-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
+  const candidates = selected.map(it => ({ id:uid(), name:it.name, ean:it.ean || '', plu:it.plu, storeNumber:'', corridorId, expiry:it.expiry, quantity:1, status:'corredor', createdAt:new Date().toISOString(), batchId:null, origemCadastro:'planilha-fefo', photo:'', tag:'', fefo:true, promotor:false, syncPending:true }));
   const imported = [];
   const seen = new Set();
   candidates.forEach((product) => { const key = productDuplicateKey(product); if (!key || seen.has(key) || findExistingProduct(product)) return; seen.add(key); imported.push(product); });
@@ -2373,7 +2371,7 @@ function openCriticalImport() {
 }
 function renderCriticalExcelItems() {
   const selected = criticalExcelItems.filter((item) => item.selected);
-  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Data inicial</span><span>Vencimento</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.plu || item.ean || 'N/A')}</span><span>${esc(item.name || 'N/A')}</span><span>${esc(item.initialDate ? fmt(item.initialDate) : 'N/A')}</span><span>${esc(item.expiry ? fmt(item.expiry) : 'N/A')}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
+  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Vencimento</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.plu || item.ean || 'N/A')}</span><span>${esc(item.name || 'N/A')}</span><span>${esc(item.expiry ? fmt(item.expiry) : 'N/A')}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmCriticalImport').disabled = !selected.length;
   document.querySelectorAll('[data-critical-excel-index]').forEach((el) => el.addEventListener('change', () => { criticalExcelItems[Number(el.dataset.criticalExcelIndex)].selected = el.checked; $('confirmCriticalImport').disabled = !criticalExcelItems.some((x) => x.selected); }));
 }
@@ -2389,7 +2387,7 @@ async function readCriticalExcelFile(event) {
     const rows = excelRowsFromSheet(sheet);
     criticalExcelItems = rows.map((row,index) => {
       const main = excelMainFields(row);
-      return { id:uid(), ean:main.ean || main.plu, plu:main.plu, name:main.name, initialDate:main.initialDate, quantity:0, expiry:main.expiry, selected:Boolean(main.name && (main.ean || main.plu || main.name)), row:index+2 };
+      return { id:uid(), ean:main.ean || main.plu, plu:main.plu, name:main.name, quantity:0, expiry:main.expiry, selected:Boolean(main.name && (main.ean || main.plu || main.name)), row:index+2 };
     }).filter(item => item.name);
     renderCriticalExcelItems();
     $('criticalExcelStatus').textContent = `${criticalExcelItems.length} produto(s) encontrado(s). Nenhum item foi salvo ainda.`;
@@ -2405,8 +2403,8 @@ async function confirmCriticalExcelImport() {
     if (!key || batchSeen.has(key)) { skipped++; return; }
     batchSeen.add(key);
     const existing = findCriticalItem(item);
-    if (existing) { existing.ean = item.ean || existing.ean; existing.plu = item.plu || existing.plu || ''; existing.name = item.name || existing.name; existing.initialDate = item.initialDate || existing.initialDate || ''; existing.quantity = 0; existing.expiry = item.expiry || existing.expiry || ''; existing.updatedAt = new Date().toISOString(); updated++; }
-    else { data.criticalItems.push({ id:uid(), ean:item.ean || '', plu:item.plu || '', name:item.name, initialDate:item.initialDate || '', quantity:0, expiry:item.expiry || '', updatedAt:new Date().toISOString() }); added++; }
+    if (existing) { existing.ean = item.ean || existing.ean; existing.plu = item.plu || existing.plu || ''; existing.name = item.name || existing.name; existing.quantity = 0; existing.expiry = item.expiry || existing.expiry || ''; existing.updatedAt = new Date().toISOString(); updated++; }
+    else { data.criticalItems.push({ id:uid(), ean:item.ean || '', plu:item.plu || '', name:item.name, quantity:0, expiry:item.expiry || '', updatedAt:new Date().toISOString() }); added++; }
   });
   await save();
   $('criticalExcelStatus').textContent = `Atualização concluída: ${added} novo(s), ${updated} atualizado(s), ${skipped} duplicado(s) ignorado(s).`;
@@ -3029,7 +3027,6 @@ $('productForm').addEventListener('submit', async (e) => {
     ean: $('ean').value.trim(),
     corridorId: isNew && batch ? batch.corridorId : $('corridor').value,
     expiry: newExpiryDate,
-    initialDate: $('initialDate')?.value || existing?.initialDate || '',
     quantity: Number($('quantity').value),
     status: $('status').value,
     createdAt: existing?.createdAt || new Date().toISOString(),
