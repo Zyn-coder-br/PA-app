@@ -2072,14 +2072,27 @@ function renderPdfFefoItems() {
     $('confirmPdfFefo').disabled = !pdfFefoItems.some(x => x.selected);
   }));
 }
-async function renderPdfPageForOcr(page, scale = 2.4) {
+async function renderPdfPageForOcr(page, scale = 1.8) {
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  const context = canvas.getContext('2d', { willReadFrequently: true });
+  const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
   await page.render({ canvasContext: context, viewport }).promise;
   return canvas;
+}
+function extractPdfTextLines(textContent) {
+  const items = (textContent?.items || []).filter((item) => String(item.str || '').trim());
+  if (!items.length) return '';
+  const rows = [];
+  items.forEach((item) => {
+    const y = Number(item.transform?.[5] || 0);
+    let row = rows.find((r) => Math.abs(r.y - y) <= 3.5);
+    if (!row) { row = { y, parts: [] }; rows.push(row); }
+    row.parts.push({ x: Number(item.transform?.[4] || 0), text: String(item.str || '') });
+  });
+  rows.sort((a, b) => b.y - a.y);
+  return rows.map((row) => row.parts.sort((a, b) => a.x - b.x).map((part) => part.text).join(' ')).join('\n');
 }
 async function readPdfFefoFile(event) {
   const file = event.target.files?.[0];
@@ -2089,24 +2102,63 @@ async function readPdfFefoFile(event) {
   $('confirmPdfFefo').disabled = true;
   $('pdfFefoStatus').textContent = 'Abrindo PDF...';
   pdfFefoItems = [];
+  let worker = null;
   try {
     window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const buffer = await file.arrayBuffer();
     const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
     const allText = [];
+    let textRowsFound = 0;
+
+    // Primeiro tentamos extrair texto nativo. Se o PDF veio de um sistema
+    // que preserva texto, evitamos OCR e a importação fica praticamente imediata.
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      $('pdfFefoStatus').textContent = `Preparando página ${pageNumber} de ${pdf.numPages}...`;
+      $('pdfFefoStatus').textContent = `Analisando página ${pageNumber} de ${pdf.numPages}...`;
       const page = await pdf.getPage(pageNumber);
-      const canvas = await renderPdfPageForOcr(page, 2.4);
-      const result = await Tesseract.recognize(canvas, 'por+eng', {
+      try {
+        const textContent = await page.getTextContent();
+        const pageText = extractPdfTextLines(textContent);
+        if (pageText.trim()) {
+          allText.push(pageText);
+          textRowsFound += pageText.split('\n').filter(Boolean).length;
+        }
+      } finally {
+        page.cleanup?.();
+      }
+    }
+
+    // Se não houver texto útil (PDF digitalizado/imagem), usamos OCR.
+    // O worker é criado uma única vez para todas as páginas, reduzindo muito
+    // o tempo de inicialização. Também usamos 1.8x em vez de 2.4x e somente
+    // português, suficiente para a lista FEFO e bem mais leve no celular.
+    const nativeItems = parsePdfFefoOcrText(allText.join('\n'));
+    if (nativeItems.length >= 2) {
+      pdfFefoItems = nativeItems;
+    } else {
+      allText.length = 0;
+      worker = await Tesseract.createWorker('por', 1, {
         logger: m => {
-          if (m.status === 'recognizing text') $('pdfFefoStatus').textContent = `Lendo PDF: página ${pageNumber}/${pdf.numPages} · ${Math.round((m.progress || 0) * 100)}%`;
+          if (m.status === 'recognizing text') {
+            $('pdfFefoStatus').textContent = `Lendo PDF: página ${m.page || '?'}/${pdf.numPages} · ${Math.round((m.progress || 0) * 100)}%`;
+          }
         }
       });
-      allText.push(result.data.text || '');
-      canvas.width = 1; canvas.height = 1;
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        $('pdfFefoStatus').textContent = `Preparando página ${pageNumber} de ${pdf.numPages}...`;
+        const page = await pdf.getPage(pageNumber);
+        const canvas = await renderPdfPageForOcr(page, 1.8);
+        try {
+          const result = await worker.recognize(canvas);
+          allText.push(result.data.text || '');
+        } finally {
+          canvas.width = 1;
+          canvas.height = 1;
+          page.cleanup?.();
+        }
+      }
+      pdfFefoItems = parsePdfFefoOcrText(allText.join('\n'));
     }
-    pdfFefoItems = parsePdfFefoOcrText(allText.join('\n'));
+
     renderPdfFefoItems();
     $('pdfFefoStatus').textContent = pdfFefoItems.length ? `${pdfFefoItems.length} produto(s) identificado(s). Nenhum item foi salvo ainda.` : 'Não consegui identificar as linhas da tabela. Tente um PDF com imagem mais nítida ou exportado diretamente do sistema.';
   } catch (error) {
@@ -2114,6 +2166,8 @@ async function readPdfFefoFile(event) {
     $('pdfFefoStatus').textContent = 'Não foi possível ler o PDF. Confira o arquivo e tente novamente.';
     pdfFefoItems = [];
     renderPdfFefoItems();
+  } finally {
+    try { if (worker) await worker.terminate(); } catch {}
   }
 }
 async function showFefoImportSummaryNotification(count) {
