@@ -2952,16 +2952,18 @@ function refreshProductsSearchResults(searchValueOverride = null) {
   if (count) count.textContent = `${list.length} produto${list.length === 1 ? '' : 's'}`;
 
   // Atualiza a paginação sem recriar a página inteira.
-  let paginationEl = listEl.nextElementSibling;
-  if (paginationEl && paginationEl.classList.contains('product-pagination')) {
-    if (totalProductPages <= 1) {
-      paginationEl.remove();
-      paginationEl = null;
+  // V64: localizar a paginação dentro do painel, não apenas como irmão imediato.
+  // Isso evita deixar controles antigos soltos após pesquisa, cadastro ou importação.
+  let paginationEl = document.querySelector('.products-filter-panel .product-pagination');
+  if (totalProductPages <= 1) {
+    paginationEl?.remove();
+    paginationEl = null;
+  } else {
+    if (!paginationEl) {
+      paginationEl = document.createElement('div');
+      paginationEl.className = 'critical-pagination product-pagination';
+      listEl.insertAdjacentElement('afterend', paginationEl);
     }
-  } else if (totalProductPages > 1) {
-    paginationEl = document.createElement('div');
-    paginationEl.className = 'critical-pagination product-pagination';
-    listEl.insertAdjacentElement('afterend', paginationEl);
   }
   if (paginationEl) {
     paginationEl.innerHTML = `<button type="button" class="secondary" id="productPrev" ${productPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${productPage}</strong> de ${totalProductPages} · ${list.length} produtos</span><button type="button" class="secondary" id="productNext" ${productPage >= totalProductPages ? 'disabled' : ''}>Próxima</button>`;
