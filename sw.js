@@ -1,4 +1,4 @@
-const CACHE = 'vpa-pwa-v62';
+const CACHE = 'vpa-pwa-v63';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './supabase-client.js',
   './manifest.webmanifest', './version.json', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-small.png', './icons/notification-logo.png'
@@ -11,13 +11,36 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 self.addEventListener('message', (event) => { if (event.data?.type === 'SKIP_WAITING') self.skipWaiting(); });
+
+function storePendingPushNotice(notice) {
+  return new Promise((resolve) => {
+    try {
+      const request = indexedDB.open('vpa-notification-center-push', 1);
+      request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains('pending')) request.result.createObjectStore('pending', { keyPath: 'id', autoIncrement: true }); };
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('pending', 'readwrite');
+        tx.objectStore('pending').add(notice);
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); resolve(); };
+      };
+      request.onerror = () => resolve();
+    } catch (_) { resolve(); }
+  });
+}
+
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch (_) { payload = { body: event.data ? event.data.text() : '' }; }
   const title = payload.title || 'Vencimento PA';
-  event.waitUntil(self.registration.showNotification(title, {
-    body: payload.body || 'Você tem uma nova atualização.', icon: payload.icon || './icons/notification-small.png', badge: payload.badge || './icons/notification-small.png', tag: payload.tag || 'vpa-push-notification', renotify: Boolean(payload.renotify), data: { ...(payload.data || {}), url: payload.url || './' }
-  }));
+  const body = payload.body || 'Você tem uma nova atualização.';
+  const tag = payload.tag || 'vpa-push-notification';
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, {
+      body, icon: payload.icon || './icons/notification-small.png', badge: payload.badge || './icons/notification-small.png', tag, renotify: Boolean(payload.renotify), data: { ...(payload.data || {}), url: payload.url || './' }
+    }),
+    storePendingPushNotice({ title, body, tag, category: payload.category || (String(title).toLowerCase().includes('promotor') ? 'Promotor PA' : String(title).toLowerCase().includes('fefo') ? 'FEFO' : 'Aviso'), createdAt: new Date().toISOString() })
+  ]));
 });
 self.addEventListener('notificationclick', (event) => {
   event.notification.close(); const targetUrl = event.notification?.data?.url || './';

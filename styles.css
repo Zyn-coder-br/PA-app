@@ -1025,3 +1025,14 @@ body{background:#f6f8f7;color:var(--figma-text)}
 .batch-history-row .row-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.batch-history-row .compact-action{padding:7px 10px;font-size:12px;min-height:34px}.batch-history-row .compact-action.danger{border:1px solid #e4b7b7;background:#fff5f5;color:#a12a2a}.batch-history-row .compact-action.secondary{border:1px solid var(--border,#d9e4df);background:#fff;color:var(--text,#18322a)}
 
 @media(max-width:650px){.products-filter-panel{padding-bottom:122px}.product-pagination{padding-bottom:105px}}
+
+/* V63 — central de notificações persistente, sem toasts de rotina cobrindo a tela */
+.notice-center-button{position:relative;display:grid;place-items:center;width:42px;height:42px;flex:0 0 42px;border:1px solid var(--line,#dbe7e1);border-radius:14px;background:#fff;color:#245c47;cursor:pointer}
+.notice-center-button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.notice-center-button span{position:absolute;right:-5px;top:-5px;min-width:19px;height:19px;padding:0 4px;border-radius:99px;background:#d94841;color:#fff;font-size:10px;font-weight:900;display:grid;place-items:center;border:2px solid #fff}
+.notice-center-button span[hidden]{display:none}
+.notice-center-dialog{width:min(94vw,600px);max-height:min(84vh,760px);padding:18px;overflow:hidden}
+.notice-center-head{margin-bottom:10px}.notice-center-list{max-height:58vh;overflow:auto;padding:2px 3px 8px;display:grid;gap:8px}
+.notice-item{padding:12px 13px;border:1px solid var(--line,#dbe7e1);border-radius:14px;background:var(--card,#fff)}
+.notice-item.unread{border-left:4px solid #188754;background:#f3faf6}.notice-item-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.notice-item-head strong{font-size:13px;color:var(--ink,#1a2e28)}.notice-item-head small{font-size:10px;color:var(--muted,#71817b);white-space:nowrap}.notice-item p{margin:8px 0;font-size:12px;line-height:1.45;color:var(--ink,#1a2e28)}.notice-category{display:inline-block;padding:4px 7px;border-radius:99px;background:#e5f3eb;color:#24744d;font-size:10px;font-weight:800}.notice-center-actions{justify-content:space-between;margin-top:10px}
+@media(max-width:470px){.user-area{gap:7px}.notice-center-button{width:36px;height:36px;flex-basis:36px;border-radius:12px}.notice-center-button svg{width:19px;height:19px}.notice-center-dialog{padding:14px}.notice-item-head{flex-direction:column;gap:3px}}
