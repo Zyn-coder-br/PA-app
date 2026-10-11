@@ -1,1 +1,5 @@
-{"version":"V60","name":"PDF FEFO mais rápido e correção da paginação","updatedAt":"2026-10-06"}
+{
+  "version": "V61",
+  "name": "Remoção automática da etiqueta PLU ao alterar vencimento",
+  "updatedAt": "2026-10-11"
+}

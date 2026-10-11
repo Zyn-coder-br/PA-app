@@ -1,4 +1,4 @@
-const APP_VERSION = 'V55';
+const APP_VERSION = 'V61';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -3011,6 +3011,9 @@ $('productForm').addEventListener('submit', async (e) => {
     : null;
   const isNew = !existing;
   const selectedType = document.querySelector('input[name=productType]:checked')?.value || 'general';
+  const newExpiryDate = $('expiry').value;
+  const expiryDateChanged = Boolean(existing && String(existing.expiry || '') !== String(newExpiryDate || ''));
+  const shouldRemovePluTag = Boolean(expiryDateChanged && /plu|etiqueta/i.test(String(existing?.tag || '')));
   if (isNew) {
     const duplicate = findExistingProduct({ ean: $('ean').value.trim(), name: $('name').value.trim() });
     if (duplicate) { showTeamToast('Este produto já existe na lista. O cadastro duplicado foi bloqueado.', 'warning'); return; }
@@ -3025,7 +3028,7 @@ $('productForm').addEventListener('submit', async (e) => {
     name: $('name').value.trim(),
     ean: $('ean').value.trim(),
     corridorId: isNew && batch ? batch.corridorId : $('corridor').value,
-    expiry: $('expiry').value,
+    expiry: newExpiryDate,
     initialDate: $('initialDate')?.value || existing?.initialDate || '',
     quantity: Number($('quantity').value),
     status: $('status').value,
@@ -3035,7 +3038,7 @@ $('productForm').addEventListener('submit', async (e) => {
     categoriaCadastro: selectedType,
     photo: $('photoData').value || existing?.photo || '',
     photoCloudUrl,
-    tag: existing?.tag || '',
+    tag: shouldRemovePluTag ? '' : (existing?.tag || ''),
     isTemporaryBatchItem: Boolean(batch && batch.status === 'aberta' && (isNew || existing?.isTemporaryBatchItem || String(existing?.batchId || '') === String(batch.id))),
     fefo: selectedType === 'fefo',
     promotor: selectedType === 'promotor',
@@ -3052,7 +3055,7 @@ $('productForm').addEventListener('submit', async (e) => {
   $('corridor').disabled = false;
   render();
   persistSoon();
-  showTeamToast('Produto salvo localmente. Sincronizando em segundo plano…', 'info');
+  showTeamToast(shouldRemovePluTag ? 'Data de vencimento alterada. Etiqueta PLU removida automaticamente; sincronizando…' : 'Produto salvo localmente. Sincronizando em segundo plano…', 'info');
 
   const corridor = data.corridors.find((c) => c.id === product.corridorId);
   syncSavedProductInBackground(product, corridor?.number, photoFile);
