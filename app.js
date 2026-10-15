@@ -251,7 +251,8 @@ function daysTo(date) {
 function badge(date) {
   const d = daysTo(date);
   if (!Number.isFinite(d)) return '<span class="badge">Sem validade</span>';
-  return `<span class="badge ${d < 0 ? 'danger' : d <= 3 ? 'warn' : ''}">${d < 0 ? 'Vencido' : d === 0 ? 'Vence hoje' : d === 1 ? 'Amanhã' : d + ' dias'}</span>`;
+  const color = d <= 10 ? 'danger' : d <= 20 ? 'warn' : 'safe';
+  return `<span class="badge ${color}">${d < 0 ? 'Vencido' : d === 0 ? 'Vence hoje' : d === 1 ? 'Amanhã' : d + ' dias'}</span>`;
 }
 function statusLabel(status) {
   return ({ corredor: 'Ainda no corredor', vencimento: 'Área de vencimento' }[status] || status || 'Ainda no corredor');
@@ -346,8 +347,7 @@ function productRow(p, options = {}) {
   const tag = p.tag ? `<span class="tag-chip">${esc(p.tag)}</span>` : '';
   const code = p.ean || p.plu || 'Código não informado';
   const place = externalPromotor ? `Empresa: ${esc(p.company || 'Não informada')} · ${esc(p.location || 'Local não informado')}` : `${esc(c?.name || 'Sem corredor')} · Código: ${esc(code)}`;
-  const initialMeta = p.initialDate ? `<div class="meta">Data inicial: ${esc(fmt(p.initialDate))}</div>` : '';
-  return `<div class="product-row ${externalPromotor ? 'external-promotor-row' : ''}"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}${externalPromotor ? ' <span class="tag-chip">PROMOTOR</span>' : ''}</div><div class="meta">${place}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div>${initialMeta}</div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
+  return `<div class="product-row ${externalPromotor ? 'external-promotor-row' : ''}"><div class="product-main">${selected}<button type="button" class="product-thumb" data-open-photo="${p.id}" aria-label="Abrir foto de ${esc(p.name)}">${productImage(p)}</button><div><div class="product-name">${esc(p.name)} ${tag}${externalPromotor ? ' <span class="tag-chip">PROMOTOR</span>' : ''}</div><div class="meta">${place}</div><div class="meta">${statusLabel(p.status)} · Qtd.: ${Number(p.quantity || 0)}${p.fefo ? ' · FEFO' : ''}</div></div></div><div class="product-side">${badge(p.expiry)}<div class="meta">${daysLabel(p.expiry)}</div><div class="meta">${fmt(p.expiry)}</div>${action}</div></div>`;
 }
 function suggestedCorridor() {
   return data.corridors.slice().sort((a, b) => {
@@ -430,8 +430,8 @@ async function notifyOverdueCorridors() {
   } catch (error) { console.warn('[VPA] Não foi possível notificar corredores em atraso:', error); }
 }
 function dashboard() {
-  const critical = data.products.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido').length;
-  const attention = data.products.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido').length;
+  const critical = data.products.filter((p) => daysTo(p.expiry) <= 10 && p.status !== 'resolvido').length;
+  const attention = data.products.filter((p) => daysTo(p.expiry) > 10 && daysTo(p.expiry) <= 20 && p.status !== 'resolvido').length;
   const resolved = data.products.filter((p) => p.status === 'resolvido').length;
   const month = today().slice(0, 7);
   const checked = new Set(data.batches.filter((b) => b.date.slice(0, 7) === month && b.status === 'finalizada').map((b) => b.corridorId)).size;
@@ -490,8 +490,8 @@ function products() {
   if (criticalMode) return `<section class="products-page"><div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 20 itens.</p></div></div><div class="products-filter-panel critical-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>${criticalListPage()}</div></section>`;
   const rebaixaCount = data.rebaixaItems.length;
   const statsList = rebaixaMode ? data.rebaixaItems : list;
-  const critical = statsList.filter((p) => daysTo(p.expiry) <= 7 && p.status !== 'resolvido' && p.status !== 'completed').length;
-  const attention = statsList.filter((p) => daysTo(p.expiry) > 7 && daysTo(p.expiry) <= 15 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const critical = statsList.filter((p) => daysTo(p.expiry) <= 10 && p.status !== 'resolvido' && p.status !== 'completed').length;
+  const attention = statsList.filter((p) => daysTo(p.expiry) > 10 && daysTo(p.expiry) <= 20 && p.status !== 'resolvido' && p.status !== 'completed').length;
   const resolved = rebaixaMode ? 0 : list.filter((p) => p.status === 'resolvido').length;
   const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
   const totalProductPages = Math.max(1, Math.ceil(list.length / 20));
@@ -750,7 +750,6 @@ function notifyProductEvent(payload) {
   const message = `Novo produto adicionado: ${name}${expiryText ? ` · Vencim. ${fmt(expiryText)}` : ''}${row.ean ? ` · EAN ${row.ean}` : ''}.`;
   addNotice('Novo produto adicionado', message, 'Produto');
   showRealtimeNotification('Vencimento PA · Novo produto', message, 'vpa-new-product-' + row.id);
-  window.setTimeout(() => runExpiryNotifications().catch(() => {}), 250);
 }
 
 function localProductFromCloud(row) {
@@ -981,8 +980,8 @@ async function refreshRebaixaOnReturn() {
   try { await mergeCloudRebaixaItems(view === 'products' && productFilter === 'rebaixa'); }
   catch (error) { console.warn('[VPA] Atualização ao retornar ao aplicativo:', error.message || error); }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refreshRebaixaOnReturn(); runExpiryNotifications().catch(() => {}); } });
-window.addEventListener('focus', () => { refreshRebaixaOnReturn(); runExpiryNotifications().catch(() => {}); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refreshRebaixaOnReturn(); } });
+window.addEventListener('focus', () => { refreshRebaixaOnReturn(); });
 
 function flushRebaixaInsertNotifications() {
   rebaixaInsertTimer = null;
@@ -1273,10 +1272,9 @@ function notifyPromotorProductEvent(payload) {
   markNotificationShown(key);
   const company = row.company ? ` · ${row.company}` : '';
   const expiryText = row.expiry || row.expiration_date || '';
-  const message = `Promotor adicionou produto: ${name}${expiryText ? ` · Vencim. ${fmt(expiryText)}` : ''}${company}.`;
+  const message = `Promotor adicionou produto: ${name}${expiryText ? ` · Vencim. ${fmt(expiryText)}` : ''}${company}${row.ean ? ` · EAN ${row.ean}` : ''}.`;
   addNotice('Novo produto do Promotor PA', message, 'Promotor PA');
-  showRealtimeNotification('Vencimento PA · Produto do Promotor', message, 'vpa-new-promotor-product-' + row.id);
-
+  showRealtimeNotification('Vencimento PA · Produto do Promotor', message, 'vpa-promotor-product-' + row.id);
 }
 
 
@@ -1285,8 +1283,8 @@ function isAdministrator() {
 }
 
 function canReceiveTeamProductNotifications() {
-  const role = String(window.VPA_PROFILE?.role || '').toLowerCase();
-  return role === 'admin' || role === 'chefe' || role === 'gerencia' || role === 'pleno' || role === 'pleno_1' || role === 'pleno_2';
+  const role = String(window.VPA_PROFILE?.role || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s-]+/g, '_');
+  return ['admin','administrador','chefe','gerencia','gerente','pleno','pleno_1','pleno_2'].includes(role);
 }
 
 function notificationLedger() {
@@ -1319,46 +1317,37 @@ function daysTo(date) {
   base.setHours(12,0,0,0);
   return Math.round((target - base) / 86400000);
 }
+function currentExpiryReminderSlot() {
+  const hour = new Date().getHours();
+  if (hour >= 16) return '16';
+  if (hour >= 14) return '14';
+  if (hour >= 12) return '12';
+  if (hour >= 8) return '08';
+  return '';
+}
 async function runExpiryNotifications() {
   if (!canReceiveTeamProductNotifications()) return;
-  const products = uniqueProductsByKey(Array.isArray(data.products) ? data.products : []).filter((p) => p?.expiry && !p.piqueConcluido && p.status !== 'resolvido');
-  const groups = new Map();
-  for (const product of products) {
-    const days = daysTo(product.expiry);
-    if (!Number.isFinite(days) || days < 0 || days > 30) continue;
-    let eligible = false;
-    if (days === 30 || days === 20 || days <= 10) eligible = true;
-    if (!eligible) continue;
-    const mode = days <= 10 ? `daily-${today()}` : `milestone-${days}`;
-    if (!groups.has(mode)) groups.set(mode, new Map());
-    const dayGroups = groups.get(mode);
-    const dayKey = String(days);
-    if (!dayGroups.has(dayKey)) dayGroups.set(dayKey, { days, count: 0 });
-    dayGroups.get(dayKey).count += 1;
-  }
-  const batches = [];
-  for (const [mode, dayGroups] of groups) {
-    const key = `expiry-summary:${mode}`;
-    if (notificationWasShown(key)) continue;
-    const ordered = Array.from(dayGroups.values()).sort((a,b) => a.days - b.days);
-    if (!ordered.length) continue;
-    batches.push({ key, ordered });
-  }
-  if (!batches.length) return;
-  const lines = [];
-  const keys = [];
-  for (const batch of batches) {
-    for (const group of batch.ordered) {
-      const label = group.days === 0 ? 'vencem hoje' : group.days === 1 ? 'vencem amanhã' : `vencem em ${group.days} dias`;
-      lines.push(`${group.count} produto${group.count === 1 ? '' : 's'} ${label}`);
-    }
-    keys.push(batch.key);
-  }
+  const slot = currentExpiryReminderSlot();
+  if (!slot) return;
+  const slotKey = `expiry-details:${today()}:${slot}`;
+  if (notificationWasShown(slotKey)) return;
+  const products = uniqueProductsByKey(Array.isArray(data.products) ? data.products : [])
+    .filter((p) => p?.expiry && !p.piqueConcluido && p.status !== 'resolvido')
+    .map((p) => ({ ...p, days: daysTo(p.expiry) }))
+    .filter((p) => (Number.isFinite(p.days) && p.days >= 0 && p.days <= 10) || p.days === 20 || p.days === 30)
+    .sort((a, b) => a.days - b.days || String(a.name).localeCompare(String(b.name), 'pt-BR'));
+  if (!products.length) { markNotificationShown(slotKey); return; }
+  const lines = products.slice(0, 35).map((p) => {
+    const due = p.days === 0 ? 'vence hoje' : p.days === 1 ? 'vence amanhã' : `vence em ${p.days} dias`;
+    return `${p.name} ${due}${p.expiry ? ` (${fmt(p.expiry)})` : ''}`;
+  });
+  if (products.length > lines.length) lines.push(`+ ${products.length - lines.length} produto(s). Abra o Vencimento PA para ver a lista completa.`);
   const message = lines.join('\n');
-  showTeamToast(message.replace(/\n/g, ' · '), 'warning');
-  await showRealtimeNotification('Vencimento PA · Resumo de validade', message, 'vpa-expiry-summary-' + today());
-  keys.forEach(markNotificationShown);
+  addNotice('Resumo de vencimentos', message, 'Validade');
+  await showRealtimeNotification('Vencimento PA · Produtos próximos do vencimento', message, `vpa-expiry-details-${today()}-${slot}`);
+  markNotificationShown(slotKey);
 }
+
 function roleLabel(role) {
   return ({ admin: 'Administrador', chefe: 'Gerência', pleno_1: 'Pleno 1', pleno_2: 'Pleno 2', pleno: 'Pleno', operador: 'Operador', promotor: 'Promotor' }[role] || role || 'Usuário');
 }
@@ -1419,7 +1408,6 @@ async function initTeamRealtime() {
     await mergeCloudPromotorProducts(false);
     await mergeCloudRebaixaItems(false);
     render();
-    await runExpiryNotifications().catch((error) => console.warn('[VPA] Alertas de validade:', error));
     const batidasChannel = await window.VPASupabase.subscribeBatidas(notifyTeamEvent);
     const productsChannel = await window.VPASupabase.subscribeProducts(notifyProductEvent);
     const temporaryBatchChannel = await window.VPASupabase.subscribeTemporaryBatchItems(notifyTemporaryBatchItemEvent);
@@ -1541,7 +1529,7 @@ function reports() {
   const checked = data.corridors.filter((c) => c.lastCheck && (c.lastCheck || '').slice(0, 7) === monthKey).length;
   const overdue = data.corridors.filter((c) => !c.lastCheck || Math.floor((new Date(today()) - new Date(c.lastCheck)) / 86400000) > 15).length;
   const separated = data.products.filter((p) => ['separado','resolvido'].includes(p.status)).length;
-  const critical = visibleProducts().filter((p) => daysTo(p.expiry) <= 7).length;
+  const critical = visibleProducts().filter((p) => daysTo(p.expiry) <= 10).length;
   const recentBatches = data.batches.slice().sort((a,b) => (b.date || '').localeCompare(a.date || '')).slice(0, 8);
   const pct = data.corridors.length ? Math.round((checked / data.corridors.length) * 100) : 0;
   return `<div class="section-head"><div><div class="eyebrow">GESTÃO E RESULTADOS</div><h2>Relatórios / Acompanhamento</h2><div class="panel-sub">Visão consolidada do trabalho registrado neste dispositivo.</div></div><button class="secondary" id="reportsBack">← Voltar</button></div>
@@ -1589,7 +1577,6 @@ function openProduct(productId = null, forceManual = false) {
   $('productForm').reset();
   $('productId').value = p?.id || '';
   $('productBatchId').value = batch?.id || '';
-  $('initialDate').value = p?.initialDate || '';
   $('expiry').value = p?.expiry || today();
   $('quantity').value = p?.quantity || 1;
   $('name').value = p?.name || '';
@@ -1601,6 +1588,12 @@ function openProduct(productId = null, forceManual = false) {
     radio.checked = radio.value === productType;
   });
   $('photoData').value = p?.photo || '';
+  const removeTagButton = $('removeProductTag');
+  if (removeTagButton) {
+    removeTagButton.hidden = !(p && p.tag);
+    removeTagButton.disabled = false;
+    removeTagButton.textContent = p?.tag ? `Remover etiqueta PLU (${p.tag})` : 'Remover etiqueta PLU';
+  }
   $('photoInput').value = '';
   $('photoPreview').innerHTML = p?.photo ? `<img src="${esc(p.photo)}" alt="Prévia do produto">` : '<span>Sem foto adicionada</span>';
   $('scanMessage').textContent = '';
@@ -2333,8 +2326,8 @@ function renderExcelFefoItems() {
   const valid = excelFefoItems.filter(x => x.selected);
   $('excelFefoResults').innerHTML = excelFefoItems.length
     ? `<div class="fefo-ocr-note">${excelFefoItems.length} produto(s) encontrado(s). Confira os dados e desmarque o que não deseja importar.</div>
-      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Data inicial</span><span>Vencimento</span></div>
-      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu || it.ean || 'N/A')}</span><span>${esc(it.name || 'N/A')}</span><span>${esc(it.initialDate ? fmt(it.initialDate) : 'N/A')}</span><span>${esc(it.expiry ? fmt(it.expiry) : 'N/A')}</span></label>`).join('')}</div>`
+      <div class="excel-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Vencimento</span></div>
+      ${excelFefoItems.map((it,i)=>`<label class="excel-import-row"><input type="checkbox" data-excel-index="${i}" ${it.selected?'checked':''}><span>${esc(it.plu || it.ean || 'N/A')}</span><span>${esc(it.name || 'N/A')}</span><span>${esc(it.expiry ? fmt(it.expiry) : 'N/A')}</span></label>`).join('')}</div>`
     : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmExcelFefo').disabled = !valid.length;
   document.querySelectorAll('[data-excel-index]').forEach(el => el.addEventListener('change', () => {
@@ -2417,7 +2410,7 @@ function openCriticalImport() {
 }
 function renderCriticalExcelItems() {
   const selected = criticalExcelItems.filter((item) => item.selected);
-  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Data inicial</span><span>Vencimento</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.plu || item.ean || 'N/A')}</span><span>${esc(item.name || 'N/A')}</span><span>${esc(item.initialDate ? fmt(item.initialDate) : 'N/A')}</span><span>${esc(item.expiry ? fmt(item.expiry) : 'N/A')}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
+  $('criticalExcelResults').innerHTML = criticalExcelItems.length ? `<div class="fefo-ocr-note">${criticalExcelItems.length} item(ns) encontrado(s). Produtos já existentes serão atualizados, sem duplicação.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>PLU / Código</span><span>Descrição</span><span>Vencimento</span></div>${criticalExcelItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-critical-excel-index="${index}" ${item.selected?'checked':''}><span>${esc(item.plu || item.ean || 'N/A')}</span><span>${esc(item.name || 'N/A')}</span><span>${esc(item.expiry ? fmt(item.expiry) : 'N/A')}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado na planilha.</div>';
   $('confirmCriticalImport').disabled = !selected.length;
   document.querySelectorAll('[data-critical-excel-index]').forEach((el) => el.addEventListener('change', () => { criticalExcelItems[Number(el.dataset.criticalExcelIndex)].selected = el.checked; $('confirmCriticalImport').disabled = !criticalExcelItems.some((x) => x.selected); }));
 }
@@ -2800,6 +2793,30 @@ function bind() {
   $('navProfilePhotoButton')?.addEventListener('click', () => { openProfilePhotoPicker(); });
   $('navLogoutButton')?.addEventListener('click', () => { if (window.VPA_LOGOUT) window.VPA_LOGOUT($('navLogoutButton')); });
   $('closeProductDialog')?.addEventListener('click', () => $('productDialog').close());
+  $('removeProductTag')?.addEventListener('click', async () => {
+    const id = $('productId')?.value;
+    const product = data.products.find((item) => String(item.id) === String(id));
+    if (!product || !product.tag) return;
+    if (!(await askConfirm('Remover etiqueta PLU?', `A etiqueta ${product.tag} será removida de ${product.name}. O produto e sua validade serão mantidos.`))) return;
+    product.tag = '';
+    product.syncPending = true;
+    await save();
+    try {
+      if (product.externalPromotor && product.sourceId && window.VPASupabase?.updatePromotorProductTag) {
+        await window.VPASupabase.updatePromotorProductTag(product.sourceId, '');
+      } else if (!product.externalPromotor && window.VPASupabase?.updateProductTag && window.VPASupabase.isConfigured?.()) {
+        await window.VPASupabase.updateProductTag(product.id, '');
+      }
+      product.syncPending = false;
+      await save();
+    } catch (error) {
+      console.warn('[VPA] Etiqueta removida localmente; sincronização pendente:', error);
+      showTeamToast('Etiqueta removida neste aparelho. A sincronização ficou pendente.', 'warning');
+    }
+    $('removeProductTag').hidden = true;
+    render();
+    $('productDialog').close();
+  });
   $('scanEan')?.addEventListener('click', startScanner);
   $('lookupEan')?.addEventListener('click', () => lookupEAN($('ean').value));
   $('closeScanner')?.addEventListener('click', closeScanner);

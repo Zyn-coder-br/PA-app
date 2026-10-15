@@ -1100,3 +1100,9 @@ body{background:#f6f8f7;color:var(--figma-text)}
     min-height: 42px;
   }
 }
+
+/* V65 — alertas de validade: 0–10 vermelho, 11–20 amarelo, 21+ verde */
+.badge.danger{background:#ffe1df!important;color:#b42318!important;border:1px solid #f7b6b2}
+.badge.warn{background:#fff0bf!important;color:#875b00!important;border:1px solid #f0d478}
+.badge.safe{background:#dff3e8!important;color:#176b43!important;border:1px solid #b6e2c9}
+#removeProductTag{margin-top:10px}

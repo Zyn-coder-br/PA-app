@@ -766,6 +766,18 @@
     return result.data;
   }
 
+  async function updateProductTag(productId, tag) {
+    const client = await init();
+    const current = await client.from('products').select('id, app_metadata').eq('id', productId).maybeSingle();
+    if (current.error) throw current.error;
+    if (!current.data) throw new Error('Produto não encontrado no banco compartilhado.');
+    const metadata = { ...(current.data.app_metadata || {}), tag: String(tag || '') };
+    const result = await client.from('products').update({ app_metadata: metadata, updated_at: new Date().toISOString() }).eq('id', productId).select('id').maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error('Não foi possível atualizar a etiqueta PLU.');
+    return result.data;
+  }
+
   async function getPushPublicKey() {
     const client = await init();
     const result = await client.from('vpa_push_settings').select('vapid_public_key').eq('id', 1).maybeSingle();
@@ -871,6 +883,7 @@
     subscribeRebaixaItems: subscribeRebaixaItems,
     deletePromotorProduct: deletePromotorProduct,
     updatePromotorProductTag: updatePromotorProductTag,
+    updateProductTag: updateProductTag,
     getPushPublicKey: getPushPublicKey,
     savePushSubscription: savePushSubscription,
     removePushSubscription: removePushSubscription,
