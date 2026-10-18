@@ -1,4 +1,4 @@
-const APP_VERSION = 'V55';
+const APP_VERSION = 'V66';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -1476,10 +1476,95 @@ async function checkForAppUpdate() {
   }
 }
 
+const DEFAULT_NOTIFICATION_SCHEDULE = [
+  { enabled: true, time: '08:00' },
+  { enabled: true, time: '12:00' },
+  { enabled: true, time: '14:00' },
+  { enabled: true, time: '16:00' }
+];
+let notificationScheduleLoadToken = 0;
+async function loadNotificationSchedulePreferences() {
+  const status = $('notificationScheduleStatus');
+  if (!status) return;
+  const token = ++notificationScheduleLoadToken;
+  if (!window.VPASupabase?.isConfigured?.()) {
+    status.textContent = 'Conecte-se ao Supabase para salvar os horários na sua conta.';
+    return;
+  }
+  status.textContent = 'Carregando horários salvos...';
+  try {
+    const prefs = await window.VPASupabase.getNotificationPreferences();
+    if (token !== notificationScheduleLoadToken || !$('notificationScheduleStatus')) return;
+    const values = [1,2,3,4].map((i) => ({
+      enabled: prefs?.[`reminder_${i}_enabled`] ?? DEFAULT_NOTIFICATION_SCHEDULE[i-1].enabled,
+      time: prefs?.[`reminder_${i}_time`] || DEFAULT_NOTIFICATION_SCHEDULE[i-1].time
+    }));
+    values.forEach((v,i) => {
+      const enabled = $(`reminder${i+1}Enabled`), time = $(`reminder${i+1}Time`);
+      if (enabled) enabled.checked = Boolean(v.enabled);
+      if (time) time.value = v.time;
+    });
+    status.textContent = 'Preferências carregadas. Fuso horário: Fortaleza (America/Fortaleza).';
+  } catch (error) {
+    status.textContent = 'Não foi possível carregar os horários salvos. Confira se a tabela de preferências foi criada no Supabase.';
+    console.warn('[VPA] Preferências de notificação:', error);
+  }
+}
+async function saveNotificationSchedulePreferences() {
+  const status = $('notificationScheduleStatus');
+  const button = $('saveNotificationSchedule');
+  if (!window.VPASupabase?.isConfigured?.()) {
+    if (status) status.textContent = 'Supabase não está conectado. Faça login e tente novamente.';
+    return;
+  }
+  const prefs = { timezone: 'America/Fortaleza' };
+  for (let i=1; i<=4; i++) {
+    const time = $(`reminder${i}Time`)?.value || DEFAULT_NOTIFICATION_SCHEDULE[i-1].time;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      if (status) status.textContent = `Confira o horário do lembrete ${i}.`;
+      return;
+    }
+    prefs[`reminder_${i}_enabled`] = Boolean($(`reminder${i}Enabled`)?.checked);
+    prefs[`reminder_${i}_time`] = time;
+  }
+  if (![1,2,3,4].some(i => prefs[`reminder_${i}_enabled`])) {
+    if (status) status.textContent = 'Ative pelo menos um horário para receber os resumos.';
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Salvando preferências na sua conta...';
+  try {
+    await window.VPASupabase.saveNotificationPreferences(prefs);
+    if (status) status.textContent = 'Horários salvos no Supabase. Eles serão aplicados pelo próximo ciclo do agendador.';
+    showTeamToast('Seus horários de notificação foram salvos.', 'success');
+  } catch (error) {
+    console.error('[VPA] Não foi possível salvar horários:', error);
+    if (status) status.textContent = `Não foi possível salvar: ${error?.message || 'verifique a tabela e as políticas do Supabase.'}`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+function resetNotificationSchedulePreferences() {
+  DEFAULT_NOTIFICATION_SCHEDULE.forEach((item,i) => {
+    const enabled = $(`reminder${i+1}Enabled`), time = $(`reminder${i+1}Time`);
+    if (enabled) enabled.checked = item.enabled;
+    if (time) time.value = item.time;
+  });
+  const status = $('notificationScheduleStatus');
+  if (status) status.textContent = 'Padrões de Fortaleza restaurados no formulário. Clique em Salvar meus horários para aplicar.';
+}
+
 function settings() {
   const admin = isAdministrator();
   const personal = `<div class="panel"><div class="product-name">Tema do aplicativo</div><p class="panel-sub">Escolha uma aparência confortável para seu turno. A preferência fica salva neste dispositivo.</p><div class="theme-switcher"><button class="${theme === 'light' ? 'primary' : 'secondary'}" id="themeLight">☀ Claro</button><button class="${theme === 'dark' ? 'primary' : 'secondary'}" id="themeDark">☾ Escuro</button></div></div>
-  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>`;
+  <div class="panel" style="margin-top:14px"><div class="product-name">Atualização do aplicativo <span class="tag-chip">${APP_VERSION}</span></div><p class="panel-sub">Consulta a versão publicada no GitHub Pages e força a atualização dos arquivos sem precisar limpar o cache manualmente.</p><div class="toolbar"><button class="primary" id="checkAppUpdate">Verificar atualização</button></div><p class="panel-sub" id="appUpdateStatus">Versão instalada: ${APP_VERSION}</p></div>
+  <div class="panel notification-schedule-panel" style="margin-top:14px"><div class="product-name">Horários dos lembretes</div><p class="panel-sub">Escolha quando deseja receber o resumo detalhado de vencimentos. Os horários são no fuso de Fortaleza (UTC−3) e ficam salvos na sua conta do Supabase.</p>
+  <div class="notification-schedule-grid">
+    <label class="notification-time-row"><input type="checkbox" id="reminder1Enabled" checked><span><strong>Lembrete 1</strong><small>Primeiro resumo do dia</small></span><input type="time" id="reminder1Time" value="08:00"></label>
+    <label class="notification-time-row"><input type="checkbox" id="reminder2Enabled" checked><span><strong>Lembrete 2</strong><small>Segundo resumo do dia</small></span><input type="time" id="reminder2Time" value="12:00"></label>
+    <label class="notification-time-row"><input type="checkbox" id="reminder3Enabled" checked><span><strong>Lembrete 3</strong><small>Terceiro resumo do dia</small></span><input type="time" id="reminder3Time" value="14:00"></label>
+    <label class="notification-time-row"><input type="checkbox" id="reminder4Enabled" checked><span><strong>Lembrete 4</strong><small>Quarto resumo do dia</small></span><input type="time" id="reminder4Time" value="16:00"></label>
+  </div><div class="toolbar"><button class="primary" id="saveNotificationSchedule">Salvar meus horários</button><button class="secondary" id="resetNotificationSchedule">Restaurar padrão</button></div><p class="panel-sub" id="notificationScheduleStatus" aria-live="polite">Carregando preferências...</p></div>`;
   if (!admin) return `<div class="section-head"><div><div class="eyebrow">PERSONALIZAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Seu perfil permite apenas ajustes pessoais e atualização do aplicativo.</p></div></div>${personal}`;
   return `<div class="section-head"><div><div class="eyebrow">ADMINISTRAÇÃO</div><h2>Ajustes</h2><p class="panel-sub">Controle geral do sistema, usuários, sincronização e preferências.</p></div></div>${personal}
   <div class="panel" style="margin-top:14px"><div class="product-name">Equipe e permissões</div><p class="panel-sub">Usuários online/offline e categoria de acesso. A alteração é aplicada no perfil do Supabase.</p><div id="adminTeamList" class="team-admin-list"><div class="empty">Carregando usuários...</div></div></div>
@@ -1565,6 +1650,7 @@ function render() {
   document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => { view = b.dataset.view; $('floatingNavPanel')?.classList.remove('open'); render(); });
   document.querySelectorAll('[data-submenu]').forEach((b) => b.onclick = () => { const key = b.dataset.submenu; if (view === 'products') { productFilter = key; localStorage.setItem('vpa-product-filter', productFilter); } if (view === 'expiries') { expiryFilter = key; localStorage.setItem('vpa-expiry-filter', expiryFilter); } if (view === 'pending') { pendingFilter = key; localStorage.setItem('vpa-pending-filter', pendingFilter); selectedProducts.clear(); } if (view === 'batches') { batchTab = key; localStorage.setItem('vpa-batch-tab', batchTab); } $('floatingNavPanel')?.classList.remove('open'); render(); });
   bind();
+  if (view === 'settings') loadNotificationSchedulePreferences();
 }
 function openProduct(productId = null, forceManual = false) {
   releasePendingProductPhotoPreview();
@@ -2851,6 +2937,8 @@ function bind() {
   $('themeLight')?.addEventListener('click', () => toggleTheme('light'));
   $('themeDark')?.addEventListener('click', () => toggleTheme('dark'));
   $('checkAppUpdate')?.addEventListener('click', checkForAppUpdate);
+  $('saveNotificationSchedule')?.addEventListener('click', saveNotificationSchedulePreferences);
+  $('resetNotificationSchedule')?.addEventListener('click', resetNotificationSchedulePreferences);
   if (isAdministrator()) loadAdminTeamMembers();
   $('enableTeamNotifications')?.addEventListener('click', requestTeamNotifications);
   $('testAndroidNotification')?.addEventListener('click', testAndroidNotification);

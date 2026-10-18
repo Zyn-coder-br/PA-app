@@ -821,6 +821,42 @@
     return result.data;
   }
 
+  async function getNotificationPreferences() {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Entre na sua conta para carregar os horários.');
+    const result = await client.from('vpa_notification_preferences').select('*').eq('user_id', session.user.id).maybeSingle();
+    if (result.error) throw result.error;
+    if (result.data) return result.data;
+    const defaults = {
+      user_id: session.user.id, timezone: 'America/Fortaleza',
+      reminder_1_enabled: true, reminder_1_time: '08:00',
+      reminder_2_enabled: true, reminder_2_time: '12:00',
+      reminder_3_enabled: true, reminder_3_time: '14:00',
+      reminder_4_enabled: true, reminder_4_time: '16:00'
+    };
+    const inserted = await client.from('vpa_notification_preferences').upsert(defaults, { onConflict: 'user_id' }).select('*').single();
+    if (inserted.error) throw inserted.error;
+    return inserted.data;
+  }
+
+  async function saveNotificationPreferences(preferences) {
+    const client = await init();
+    const session = await getSession();
+    if (!session?.user?.id) throw new Error('Entre na sua conta para salvar os horários.');
+    const payload = {
+      user_id: session.user.id, timezone: 'America/Fortaleza',
+      reminder_1_enabled: Boolean(preferences.reminder_1_enabled), reminder_1_time: preferences.reminder_1_time,
+      reminder_2_enabled: Boolean(preferences.reminder_2_enabled), reminder_2_time: preferences.reminder_2_time,
+      reminder_3_enabled: Boolean(preferences.reminder_3_enabled), reminder_3_time: preferences.reminder_3_time,
+      reminder_4_enabled: Boolean(preferences.reminder_4_enabled), reminder_4_time: preferences.reminder_4_time,
+      updated_at: new Date().toISOString()
+    };
+    const result = await client.from('vpa_notification_preferences').upsert(payload, { onConflict: 'user_id' }).select('*').single();
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
   async function unsubscribe(channel) {
     const client = await init();
     if (channel) {
@@ -888,6 +924,8 @@
     savePushSubscription: savePushSubscription,
     removePushSubscription: removePushSubscription,
     invokePushNotification: invokePushNotification,
+    getNotificationPreferences: getNotificationPreferences,
+    saveNotificationPreferences: saveNotificationPreferences,
     unsubscribe: unsubscribe,
     getClient: function () { return state.client; }
   };

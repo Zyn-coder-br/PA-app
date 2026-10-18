@@ -1106,3 +1106,14 @@ body{background:#f6f8f7;color:var(--figma-text)}
 .badge.warn{background:#fff0bf!important;color:#875b00!important;border:1px solid #f0d478}
 .badge.safe{background:#dff3e8!important;color:#176b43!important;border:1px solid #b6e2c9}
 #removeProductTag{margin-top:10px}
+
+
+/* V66 — preferências individuais de horários de notificação */
+.notification-schedule-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.notification-time-row { display:grid; grid-template-columns:auto minmax(0,1fr) 112px; align-items:center; gap:10px; padding:12px; border:1px solid var(--border, #dce7e2); border-radius:14px; background:var(--surface, #fff); cursor:pointer; }
+.notification-time-row span { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.notification-time-row strong { font-size:14px; }
+.notification-time-row small { font-size:12px; color:var(--muted, #718096); }
+.notification-time-row input[type="time"] { width:100%; min-width:0; }
+.notification-time-row input[type="checkbox"] { width:18px; height:18px; accent-color:#168653; }
+@media(max-width:700px) { .notification-schedule-grid { grid-template-columns:minmax(0,1fr); } .notification-time-row { grid-template-columns:auto minmax(0,1fr) 104px; } }
