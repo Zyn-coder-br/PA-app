@@ -1137,3 +1137,15 @@ body{background:#f6f8f7;color:var(--figma-text)}
   #productDialog.operator-quick-mode .ean-line { grid-template-columns: minmax(0,1fr) auto auto; gap: 4px; }
   #productDialog.operator-quick-mode .ean-btn { padding: 10px 7px; font-size: 11px; }
 }
+
+
+/* V68 — ocultação forçada dos atalhos FEFO para perfil Operador.
+   Alguns estilos de botão sobrescreviam o atributo HTML hidden. */
+#productDialog.operator-quick-mode .product-type-field,
+#productDialog.operator-quick-mode #openFefoScanner,
+#productDialog.operator-quick-mode #openExcelFefoImport,
+#productDialog.operator-quick-mode #openPdfFefoImport {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

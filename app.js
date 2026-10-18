@@ -1,4 +1,4 @@
-const APP_VERSION = 'V67';
+const APP_VERSION = 'V68';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -1666,10 +1666,18 @@ function openProduct(productId = null, forceManual = false) {
   const productTitle = productDialog?.querySelector('.dialog-head h2');
   if (productTitle) productTitle.textContent = p ? (operatorQuickMode ? 'Editar produto' : 'Editar produto') : (operatorQuickMode ? 'Cadastro rápido' : 'Novo produto');
   const typeField = productDialog?.querySelector('.product-type-field');
-  if (typeField) typeField.hidden = operatorQuickMode;
+  if (typeField) {
+    typeField.hidden = operatorQuickMode;
+    typeField.style.display = operatorQuickMode ? 'none' : '';
+  }
   ['openFefoScanner', 'openExcelFefoImport', 'openPdfFefoImport'].forEach((id) => {
     const button = $(id);
-    if (button) button.hidden = operatorQuickMode;
+    if (button) {
+      button.hidden = operatorQuickMode;
+      button.style.display = operatorQuickMode ? 'none' : '';
+      button.setAttribute('aria-hidden', operatorQuickMode ? 'true' : 'false');
+      button.tabIndex = operatorQuickMode ? -1 : 0;
+    }
   });
   ['quantity', 'status'].forEach((id) => {
     const field = $(id);

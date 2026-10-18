@@ -1,4 +1,4 @@
-const CACHE = 'vpa-pwa-v67';
+const CACHE = 'vpa-pwa-v68';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './supabase-client.js',
   './manifest.webmanifest', './version.json', './icons/icon-192.png', './icons/icon-512.png', './icons/notification-small.png', './icons/notification-logo.png'
