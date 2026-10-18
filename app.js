@@ -1,4 +1,4 @@
-const APP_VERSION = 'V66';
+const APP_VERSION = 'V67';
 const DB = 'vpa-local-v4';
 const STORE = 'data';
 let db;
@@ -1658,6 +1658,28 @@ function openProduct(productId = null, forceManual = false) {
   productPhotoProcessing = false;
   const p = data.products.find((x) => x.id === productId);
   const currentBatch = activeBatch();
+  // Cadastro rápido para Operador: expõe somente os campos usados na rotina.
+  const role = String(window.VPA_PROFILE?.role || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s-]+/g, '_');
+  const operatorQuickMode = role === 'operador';
+  const productDialog = $('productDialog');
+  productDialog?.classList.toggle('operator-quick-mode', operatorQuickMode);
+  const productTitle = productDialog?.querySelector('.dialog-head h2');
+  if (productTitle) productTitle.textContent = p ? (operatorQuickMode ? 'Editar produto' : 'Editar produto') : (operatorQuickMode ? 'Cadastro rápido' : 'Novo produto');
+  const typeField = productDialog?.querySelector('.product-type-field');
+  if (typeField) typeField.hidden = operatorQuickMode;
+  ['openFefoScanner', 'openExcelFefoImport', 'openPdfFefoImport'].forEach((id) => {
+    const button = $(id);
+    if (button) button.hidden = operatorQuickMode;
+  });
+  ['quantity', 'status'].forEach((id) => {
+    const field = $(id);
+    const label = field?.closest('label');
+    if (label) label.hidden = operatorQuickMode;
+  });
+  const removeTagControl = $('removeProductTag');
+  if (removeTagControl && operatorQuickMode) removeTagControl.hidden = true;
+  const photoHelp = productDialog?.querySelector('.field-help:last-of-type');
+  if (photoHelp) photoHelp.hidden = operatorQuickMode;
   const batch = p?.batchId ? data.batches.find((b) => String(b.id) === String(p.batchId) && b.status === 'aberta') : (forceManual ? null : currentBatch);
   $('corridor').innerHTML = data.corridors.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $('productForm').reset();

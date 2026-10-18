@@ -1117,3 +1117,23 @@ body{background:#f6f8f7;color:var(--figma-text)}
 .notification-time-row input[type="time"] { width:100%; min-width:0; }
 .notification-time-row input[type="checkbox"] { width:18px; height:18px; accent-color:#168653; }
 @media(max-width:700px) { .notification-schedule-grid { grid-template-columns:minmax(0,1fr); } .notification-time-row { grid-template-columns:auto minmax(0,1fr) 104px; } }
+
+
+/* V67 — formulário de cadastro rápido para o perfil Operador */
+#productDialog.operator-quick-mode { width: min(94vw, 520px); max-height: 92vh; overflow-y: auto; }
+#productDialog.operator-quick-mode #productForm { padding: 22px; }
+#productDialog.operator-quick-mode .dialog-head { margin-bottom: 18px; }
+#productDialog.operator-quick-mode #productForm > label { margin: 16px 0; }
+#productDialog.operator-quick-mode #productForm > label:has(#name),
+#productDialog.operator-quick-mode #productForm > label:has(#corridor),
+#productDialog.operator-quick-mode #productForm > label:has(#expiry),
+#productDialog.operator-quick-mode #productForm > label:has(#photoInput) { display: grid; }
+#productDialog.operator-quick-mode #productForm #saveProduct { position: sticky; bottom: 0; margin-top: 18px; box-shadow: 0 -8px 18px #ffffffd9; }
+#productDialog.operator-quick-mode .ean-line { grid-template-columns: minmax(0,1fr) auto auto; }
+#productDialog.operator-quick-mode .photo-preview { min-height: 68px; }
+@media(max-width: 560px) {
+  #productDialog.operator-quick-mode { width: 96vw; max-height: 94dvh; border-radius: 20px; }
+  #productDialog.operator-quick-mode #productForm { padding: 18px; }
+  #productDialog.operator-quick-mode .ean-line { grid-template-columns: minmax(0,1fr) auto auto; gap: 4px; }
+  #productDialog.operator-quick-mode .ean-btn { padding: 10px 7px; font-size: 11px; }
+}
