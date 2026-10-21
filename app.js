@@ -459,14 +459,14 @@ function criticalListPage() {
   const q = String(criticalSearch || '').trim().toLowerCase();
   let list = data.criticalItems.slice().sort((a,b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')) || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
   if (q) list = list.filter((item) => `${item.name || ''} ${item.ean || ''} ${item.expiry || ''}`.toLowerCase().includes(q));
-  const totalPages = Math.max(1, Math.ceil(list.length / 20));
+  const totalPages = Math.max(1, Math.ceil(list.length / 40));
   criticalPage = Math.min(Math.max(1, criticalPage), totalPages);
-  const start = (criticalPage - 1) * 20;
-  const pageItems = list.slice(start, start + 20);
+  const start = (criticalPage - 1) * 40;
+  const pageItems = list.slice(start, start + 40);
   const rows = pageItems.map((item, idx) => `<div class="critical-row"><div class="critical-index">${start + idx + 1}</div><div class="critical-main"><div class="critical-name">${esc(item.name || 'Produto sem descrição')}</div><div class="meta">EAN: ${esc(item.ean || 'Não informado')} · Validade: ${item.expiry ? esc(fmt(item.expiry)) : 'Não informada'}</div></div><div class="critical-stock"><span>Estoque</span><strong>${Number(item.quantity || 0)}</strong></div><button type="button" class="critical-delete" data-critical-delete="${esc(item.id)}" aria-label="Remover ${esc(item.name)}" title="Remover produto">${uiIcon('trash',16)}</button></div>`).join('');
   const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="criticalPrev" ${criticalPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${criticalPage}</strong> de ${totalPages} · ${list.length} produtos</span><button type="button" class="secondary" id="criticalNext" ${criticalPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
   return `<div class="products-toolbar critical-toolbar"><div class="products-search-wrap"><span>${uiIcon('search',16)}</span><input class="search compact-search" id="criticalSearch" placeholder="Buscar por EAN ou descrição..." value="${esc(criticalSearch)}"></div><button type="button" class="primary" id="openCriticalImport">${uiIcon('upload',16)} Importar Excel</button></div>
-  <div class="products-overview"><div class="product-stat-card"><div class="product-stat-icon red">${uiIcon('alert',18)}</div><div><strong>${list.length}</strong><span>Produtos críticos</span></div></div><div class="product-stat-card"><div class="product-stat-icon blue">${uiIcon('file',18)}</div><div><strong>20</strong><span>Itens por página</span></div></div></div>
+  <div class="products-overview"><div class="product-stat-card"><div class="product-stat-icon red">${uiIcon('alert',18)}</div><div><strong>${list.length}</strong><span>Produtos críticos</span></div></div><div class="product-stat-card"><div class="product-stat-icon blue">${uiIcon('file',18)}</div><div><strong>40</strong><span>Itens por página</span></div></div></div>
   <div class="critical-list-head"><span>#</span><span>Produto / validade</span><span>Quantidade</span><span></span></div><div class="critical-list">${rows || '<div class="empty">Nenhum produto na Lista Crítica. Importe uma planilha Excel para começar.</div>'}</div>${pagination}`;
 }
 function products() {
@@ -503,7 +503,7 @@ function products() {
       <div class="products-toolbar">
         <div class="products-search-wrap"><span>⌕</span><input class="search compact-search" id="search" type="search" inputmode="search" autocomplete="off" enterkeyhint="search" autocapitalize="none" spellcheck="false" placeholder="Buscar por nome, EAN ou marca..." value="${esc(searchValue)}"></div><label class="expiry-month-filter-label" for="expiryMonthFilter">Validade<select id="expiryMonthFilter" class="expiry-month-filter"><option value="all" ${expiryMonthFilter === 'all' ? 'selected' : ''}>Todos os meses</option>${expiryMonths.map((month,index) => `<option value="${index+1}" ${String(expiryMonthFilter) === String(index+1) ? 'selected' : ''}>${month}</option>`).join('')}</select></label>
         ${filter === 'promotor' ? `<label class="company-filter-label" for="promotorCompanyFilter">Empresa<select id="promotorCompanyFilter" class="company-filter"><option value="all" ${promotorCompanyFilter === 'all' ? 'selected' : ''}>Todas as empresas</option>${promotorCompanies.map((company) => `<option value="${esc(company)}" ${promotorCompanyFilter === company ? 'selected' : ''}>${esc(company)}</option>`).join('')}</select></label>` : ''}
-        <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>
+        <span class="product-count" aria-live="polite">${list.length} produto${list.length === 1 ? '' : 's'}</span>${filter === 'all' ? `<button type="button" class="secondary" id="openCommonPdfImport">${uiIcon('file',16)} Importar PDF</button>` : ''}
       </div>
       <div class="list products-list" id="productList">${groupedProductRows(pageList,{selectable:true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>'}</div>${productPagination}
       <div class="bulk-actions-dock" aria-label="Ações dos produtos selecionados">
@@ -2515,6 +2515,88 @@ async function confirmExcelFefoImport() {
   render();
 }
 
+let commonPdfItems = [];
+function openCommonPdfImport() {
+  commonPdfItems = [];
+  $('commonPdfInput').value = '';
+  $('commonPdfStatus').textContent = '';
+  $('commonPdfResults').innerHTML = '<div class="empty">Selecione o PDF da lista de vencimentos.</div>';
+  $('confirmCommonPdfImport').disabled = true;
+  $('commonPdfImportDialog').showModal();
+}
+function parseCommonExpiryPdfText(text) {
+  const result = [];
+  const seen = new Set();
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    const line = rawLine.replace(/\s+/g, ' ').trim();
+    // Formato do relatório: código de 13 dígitos + hífen + descrição + data VALIDADE.
+    const match = line.match(/(?:^|\s)(\d{13})\s*-\s*(.+?)\s+(\d{2}\/\d{2}\/\d{4})(?=\s|$)/);
+    if (!match) continue;
+    const code = match[1]; // manter como string para preservar zeros à esquerda
+    const name = match[2].replace(/\s+/g, ' ').trim();
+    const date = match[3];
+    const [dd, mm, yyyy] = date.split('/');
+    const expiry = `${yyyy}-${mm}-${dd}`;
+    if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) continue;
+    const key = `${code}|${expiry}|${name.toLocaleLowerCase('pt-BR')}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ id: uid(), ean: code, plu: code, name, expiry, selected: true });
+  }
+  return result.sort((a,b) => a.expiry.localeCompare(b.expiry) || a.name.localeCompare(b.name, 'pt-BR'));
+}
+function renderCommonPdfItems() {
+  const selected = commonPdfItems.filter(item => item.selected);
+  $('commonPdfResults').innerHTML = commonPdfItems.length ? `<div class="fefo-ocr-note">${commonPdfItems.length} produto(s) identificado(s). Os itens serão cadastrados em Produtos comuns → Todos, sem classificação FEFO. Produtos já existentes não serão duplicados.</div><div class="excel-import-table critical-import-table"><div class="excel-import-head"><span>Importar</span><span>Código</span><span>Descrição</span><span>Validade</span></div>${commonPdfItems.map((item,index)=>`<label class="excel-import-row"><input type="checkbox" data-common-pdf-index="${index}" ${item.selected?'checked':''}><span>${esc(item.ean)}</span><span>${esc(item.name)}</span><span>${esc(fmt(item.expiry))}</span></label>`).join('')}</div>` : '<div class="empty">Nenhum produto válido foi encontrado. Confira se o PDF contém código, descrição e validade na mesma linha.</div>';
+  $('confirmCommonPdfImport').disabled = !selected.length;
+  document.querySelectorAll('[data-common-pdf-index]').forEach(el => el.addEventListener('change', () => { commonPdfItems[Number(el.dataset.commonPdfIndex)].selected = el.checked; $('confirmCommonPdfImport').disabled = !commonPdfItems.some(x => x.selected); }));
+}
+async function readCommonExpiryPdf(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!window.pdfjsLib) { $('commonPdfStatus').textContent = 'Leitor PDF não carregado. Verifique a conexão e tente novamente.'; return; }
+  $('commonPdfStatus').textContent = 'Lendo texto do PDF...';
+  $('confirmCommonPdfImport').disabled = true;
+  commonPdfItems = [];
+  try {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      $('commonPdfStatus').textContent = `Analisando página ${pageNumber} de ${pdf.numPages}...`;
+      const page = await pdf.getPage(pageNumber);
+      try { pages.push(extractPdfTextLines(await page.getTextContent())); }
+      finally { page.cleanup?.(); }
+    }
+    commonPdfItems = parseCommonExpiryPdfText(pages.join('\n'));
+    renderCommonPdfItems();
+    $('commonPdfStatus').textContent = `${commonPdfItems.length} produto(s) encontrado(s). Nada foi salvo ainda.`;
+  } catch (error) {
+    console.error('[VPA] Falha ao ler PDF de vencimentos:', error);
+    $('commonPdfStatus').textContent = 'Não foi possível ler o PDF. Tente exportá-lo novamente e confira se o texto pode ser selecionado.';
+    commonPdfItems = [];
+    renderCommonPdfItems();
+  }
+}
+async function confirmCommonPdfImport() {
+  const selected = commonPdfItems.filter(item => item.selected && item.name && item.expiry);
+  if (!selected.length) return;
+  let added = 0, skipped = 0;
+  const seen = new Set();
+  for (const item of selected) {
+    const key = normalizeProductKey(item.ean) || normalizeProductKey(item.name);
+    if (!key || seen.has(key) || findExistingProduct({ ean: item.ean, name: item.name })) { skipped++; continue; }
+    seen.add(key);
+    data.products.push({ id: uid(), name: item.name, ean: item.ean, plu: item.plu, storeNumber: '', corridorId: data.corridors[0]?.id || '', expiry: item.expiry, quantity: 0, status: 'corredor', createdAt: new Date().toISOString(), batchId: null, origemCadastro: 'pdf-vencimentos-comuns', photo: '', tag: '', fefo: false, promotor: false, syncPending: true });
+    added++;
+  }
+  await save();
+  $('commonPdfStatus').textContent = `Importação concluída: ${added} novo(s), ${skipped} duplicado(s) ignorado(s).`;
+  showTeamToast(`PDF importado: ${added} produto(s) adicionado(s) em Produtos comuns.`, 'success');
+  $('commonPdfImportDialog').close();
+  productFilter = 'all'; productPage = 1; render();
+}
+
 let criticalExcelItems = [];
 function openCriticalImport() {
   criticalExcelItems = [];
@@ -2880,6 +2962,11 @@ function bind() {
   $('cancelExcelFefo')?.addEventListener('click', () => $('excelFefoDialog').close());
   $('excelFefoInput')?.addEventListener('change', readExcelFefoFile);
   $('confirmExcelFefo')?.addEventListener('click', confirmExcelFefoImport);
+  $('openCommonPdfImport')?.addEventListener('click', openCommonPdfImport);
+  $('closeCommonPdfImport')?.addEventListener('click', () => $('commonPdfImportDialog').close());
+  $('cancelCommonPdfImport')?.addEventListener('click', () => $('commonPdfImportDialog').close());
+  $('commonPdfInput')?.addEventListener('change', readCommonExpiryPdf);
+  $('confirmCommonPdfImport')?.addEventListener('click', confirmCommonPdfImport);
   $('closeCriticalImport')?.addEventListener('click', () => $('criticalImportDialog').close());
   $('cancelCriticalImport')?.addEventListener('click', () => $('criticalImportDialog').close());
   $('criticalExcelInput')?.addEventListener('change', readCriticalExcelFile);
