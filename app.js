@@ -487,17 +487,17 @@ function products() {
   list = sortProductsByRemainingDays(list);
   const rebaixaMode = filter === 'rebaixa';
   const criticalMode = filter === 'critical';
-  if (criticalMode) return `<section class="products-page"><div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 20 itens.</p></div></div><div class="products-filter-panel critical-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>${criticalListPage()}</div></section>`;
+  if (criticalMode) return `<section class="products-page"><div class="products-hero"><div class="products-hero-copy"><div class="hero-eyebrow">OPERAÇÃO · LISTA CRÍTICA</div><h2>Lista Crítica</h2><p>Produtos em estado crítico de vencimento, importados por planilha e organizados em páginas de até 40 itens.</p></div></div><div class="products-filter-panel critical-panel"><div class="subnav products-subnav" aria-label="Subseções de produtos">${filters.map(([key,label]) => `<button type="button" class="subnav-btn ${filter===key?'active':''}" data-product-filter="${key}">${label}</button>`).join('')}</div>${criticalListPage()}</div></section>`;
   const rebaixaCount = data.rebaixaItems.length;
   const statsList = rebaixaMode ? data.rebaixaItems : list;
   const critical = statsList.filter((p) => daysTo(p.expiry) <= 10 && p.status !== 'resolvido' && p.status !== 'completed').length;
   const attention = statsList.filter((p) => daysTo(p.expiry) > 10 && daysTo(p.expiry) <= 20 && p.status !== 'resolvido' && p.status !== 'completed').length;
   const resolved = rebaixaMode ? 0 : list.filter((p) => p.status === 'resolvido').length;
   const fefoCount = rebaixaMode ? 0 : list.filter((p) => p.fefo).length;
-  const totalProductPages = Math.max(1, Math.ceil(list.length / 20));
+  const totalProductPages = Math.max(1, Math.ceil(list.length / 40));
   productPage = Math.min(Math.max(1, productPage), totalProductPages);
-  const productStart = (productPage - 1) * 20;
-  const pageList = list.slice(productStart, productStart + 20);
+  const productStart = (productPage - 1) * 40;
+  const pageList = list.slice(productStart, productStart + 40);
   const productPagination = totalProductPages > 1 ? `<div class="critical-pagination product-pagination"><button type="button" class="secondary" id="productPrev" ${productPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${productPage}</strong> de ${totalProductPages} · ${list.length} produtos</span><button type="button" class="secondary" id="productNext" ${productPage >= totalProductPages ? 'disabled' : ''}>Próxima</button></div>` : '';
   const panelContent = rebaixaMode ? rebaixaPage() : `
       <div class="products-toolbar">
@@ -546,12 +546,12 @@ function batches() {
 function expiries() {
   const tabs = [['today','Hoje'],['tomorrow','Amanhã'],['ten','Até 10 dias'],['thirty','Até 30 dias']];
   let list = sortProductsByRemainingDays(visibleProducts().filter((p) => expiryGroupFor(p, expiryFilter)));
-  const totalPages = Math.max(1, Math.ceil(list.length / 20));
+  const totalPages = Math.max(1, Math.ceil(list.length / 40));
   expiryPage = Math.min(Math.max(1, expiryPage), totalPages);
-  const start = (expiryPage - 1) * 20;
-  const pageList = list.slice(start, start + 20);
+  const start = (expiryPage - 1) * 40;
+  const pageList = list.slice(start, start + 40);
   const pagination = totalPages > 1 ? `<div class="critical-pagination"><button type="button" class="secondary" id="expiryPrev" ${expiryPage <= 1 ? 'disabled' : ''}>Anterior</button><span>Página <strong>${expiryPage}</strong> de ${totalPages} · ${list.length} produtos</span><button type="button" class="secondary" id="expiryNext" ${expiryPage >= totalPages ? 'disabled' : ''}>Próxima</button></div>` : '';
-  return `<div class="section-head"><div><div class="eyebrow">ACOMPANHAMENTO</div><h2>Vencimentos</h2></div></div><div class="subnav expiry-tabs">${tabs.map(([key,label]) => `<button class="subnav-btn ${expiryFilter===key?'active':''}" data-expiry-filter="${key}">${label}</button>`).join('')}</div><div class="panel"><div class="panel-head"><div class="panel-sub">${list.length} produto${list.length === 1 ? '' : 's'} · 20 por página</div><button type="button" class="secondary" id="expirySelectPage">Marcar/desmarcar página</button></div><div class="list">${groupedProductRows(pageList,{selectable:true}) || '<div class="empty">Nenhum produto nesta categoria.</div>'}</div>${pagination}</div>`;
+  return `<div class="section-head"><div><div class="eyebrow">ACOMPANHAMENTO</div><h2>Vencimentos</h2></div></div><div class="subnav expiry-tabs">${tabs.map(([key,label]) => `<button class="subnav-btn ${expiryFilter===key?'active':''}" data-expiry-filter="${key}">${label}</button>`).join('')}</div><div class="panel"><div class="panel-head"><div class="panel-sub">${list.length} produto${list.length === 1 ? '' : 's'} · 40 por página</div><button type="button" class="secondary" id="expirySelectPage">Marcar/desmarcar página</button></div><div class="list">${groupedProductRows(pageList,{selectable:true}) || '<div class="empty">Nenhum produto nesta categoria.</div>'}</div>${pagination}</div>`;
 }
 function expiryGroupFor(p, filter) {
   const d = daysTo(p.expiry);
@@ -3164,10 +3164,10 @@ function refreshProductsSearchResults(searchValueOverride = null) {
 
   // A pesquisa deve atualizar somente a lista. Recriar #view a cada caractere
   // fazia o input #search ser destruído e recriado, fechando o teclado do Android.
-  const totalProductPages = Math.max(1, Math.ceil(list.length / 20));
+  const totalProductPages = Math.max(1, Math.ceil(list.length / 40));
   productPage = Math.min(Math.max(1, productPage), totalProductPages);
-  const productStart = (productPage - 1) * 20;
-  const pageList = list.slice(productStart, productStart + 20);
+  const productStart = (productPage - 1) * 40;
+  const pageList = list.slice(productStart, productStart + 40);
   listEl.innerHTML = groupedProductRows(pageList, {selectable: true}) || '<div class="empty">Nenhum produto cadastrado nesta categoria.</div>';
 
   const count = document.querySelector('.product-count');
